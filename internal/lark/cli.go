@@ -4,24 +4,30 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"os"
 	"os/exec"
 	"strings"
 )
 
 type CLI struct {
-	Bin string
+	Bin     string
+	NoProxy bool
 }
 
-func NewCLI(bin string) CLI {
+func NewCLI(bin string, noProxy ...bool) CLI {
 	bin = strings.TrimSpace(bin)
 	if bin == "" {
 		bin = "lark-cli"
 	}
-	return CLI{Bin: bin}
+	disableProxy := len(noProxy) > 0 && noProxy[0]
+	return CLI{Bin: bin, NoProxy: disableProxy}
 }
 
 func (cli CLI) Run(ctx context.Context, args ...string) ([]byte, error) {
 	cmd := exec.CommandContext(ctx, cli.Bin, args...)
+	if cli.NoProxy {
+		cmd.Env = append(os.Environ(), "LARK_CLI_NO_PROXY=1")
+	}
 	output, err := cmd.CombinedOutput()
 	if err != nil {
 		return nil, fmt.Errorf("%s %s: %w: %s", cli.Bin, strings.Join(args, " "), err, strings.TrimSpace(string(output)))

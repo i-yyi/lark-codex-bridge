@@ -12,6 +12,7 @@ type Config struct {
 	DefaultWorkDir string `json:"default_work_dir"`
 	StatePath      string `json:"state_path"`
 	LarkCLI        string `json:"lark_cli"`
+	LarkCLINoProxy bool   `json:"lark_cli_no_proxy"`
 	CodexCLI       string `json:"codex_cli"`
 }
 

@@ -10,6 +10,7 @@ const (
 	CommandHelp    CommandName = "help"
 	CommandStatus  CommandName = "status"
 	CommandCreate  CommandName = "create"
+	CommandReset   CommandName = "reset"
 	CommandStop    CommandName = "stop"
 	CommandApprove CommandName = "approve"
 	CommandDeny    CommandName = "deny"
@@ -45,6 +46,8 @@ func ParseCommand(text string) Command {
 		cmd.Name = CommandStatus
 	case "create":
 		cmd.Name = CommandCreate
+	case "reset":
+		cmd.Name = CommandReset
 	case "stop":
 		cmd.Name = CommandStop
 	case "approve":

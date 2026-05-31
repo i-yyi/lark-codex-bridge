@@ -75,6 +75,13 @@ func (state *State) SetSessionThread(key string, threadID string) {
 	state.Sessions[key] = session
 }
 
+func (state *State) SetSessionWorkDir(key string, workDir string) {
+	key = cleanSessionKey(key)
+	session := state.EnsureSession(key, "")
+	session.WorkDir = cleanDefaultWorkDir(workDir)
+	state.Sessions[key] = session
+}
+
 func (state State) Save(path string) error {
 	data, err := json.MarshalIndent(state, "", "  ")
 	if err != nil {

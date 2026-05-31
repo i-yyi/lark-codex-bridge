@@ -157,8 +157,7 @@ func (client *Client) ResumeThread(ctx context.Context, threadID string, cwd str
 	defer client.mu.Unlock()
 
 	params := map[string]any{
-		"threadId":     threadID,
-		"excludeTurns": true,
+		"threadId": threadID,
 	}
 	if cwd = strings.TrimSpace(cwd); cwd != "" {
 		params["cwd"] = cwd
@@ -228,80 +227,7 @@ func (client *Client) RunTurn(ctx context.Context, threadID string, cwd string, 
 		return TurnResult{}, fmt.Errorf("turn/start response missing turn id")
 	}
 
-	var deltas strings.Builder
-	var finalText string
-	for {
-		message, err := client.readLocked(ctx)
-		if err != nil {
-			return TurnResult{}, err
-		}
-		if message.Error != nil {
-			return TurnResult{}, message.Error
-		}
-		if message.isServerRequest() {
-			return TurnResult{}, fmt.Errorf("codex requested user interaction: %s", message.Method)
-		}
-
-		switch message.Method {
-		case "item/agentMessage/delta":
-			var params struct {
-				ThreadID string `json:"threadId"`
-				TurnID   string `json:"turnId"`
-				Delta    string `json:"delta"`
-			}
-			if err := json.Unmarshal(message.Params, &params); err != nil {
-				return TurnResult{}, fmt.Errorf("decode agent delta: %w", err)
-			}
-			if params.ThreadID == threadID && params.TurnID == turnID {
-				deltas.WriteString(params.Delta)
-			}
-		case "item/completed":
-			var params struct {
-				ThreadID string `json:"threadId"`
-				TurnID   string `json:"turnId"`
-				Item     struct {
-					Type  string `json:"type"`
-					Text  string `json:"text"`
-					Phase string `json:"phase"`
-				} `json:"item"`
-			}
-			if err := json.Unmarshal(message.Params, &params); err != nil {
-				return TurnResult{}, fmt.Errorf("decode completed item: %w", err)
-			}
-			if params.ThreadID == threadID && params.TurnID == turnID && params.Item.Type == "agentMessage" {
-				finalText = params.Item.Text
-			}
-		case "turn/completed":
-			var params struct {
-				ThreadID string `json:"threadId"`
-				Turn     struct {
-					ID     string `json:"id"`
-					Status string `json:"status"`
-					Error  any    `json:"error"`
-				} `json:"turn"`
-			}
-			if err := json.Unmarshal(message.Params, &params); err != nil {
-				return TurnResult{}, fmt.Errorf("decode turn/completed: %w", err)
-			}
-			if params.ThreadID != threadID || params.Turn.ID != turnID {
-				continue
-			}
-			if params.Turn.Status != "completed" {
-				return TurnResult{}, fmt.Errorf("turn %s ended with status %s: %v", turnID, params.Turn.Status, params.Turn.Error)
-			}
-			answer := deltas.String()
-			if answer == "" {
-				answer = finalText
-			}
-			return TurnResult{ThreadID: threadID, TurnID: turnID, Text: strings.TrimSpace(answer)}, nil
-		case "error":
-			var params struct {
-				Error any `json:"error"`
-			}
-			_ = json.Unmarshal(message.Params, &params)
-			return TurnResult{}, fmt.Errorf("codex error notification: %v", params.Error)
-		}
-	}
+	return client.drainTurnLocked(ctx, threadID, turnID)
 }
 
 func (client *Client) requestLocked(ctx context.Context, method string, params any) (json.RawMessage, error) {

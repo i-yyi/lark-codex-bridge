@@ -11,8 +11,8 @@ type Client struct {
 	CLI CLI
 }
 
-func NewClient(bin string) Client {
-	return Client{CLI: NewCLI(bin)}
+func NewClient(bin string, noProxy ...bool) Client {
+	return Client{CLI: NewCLI(bin, noProxy...)}
 }
 
 func (client Client) FetchMessageDetail(ctx context.Context, messageID string) (MessageDetail, error) {
@@ -30,7 +30,10 @@ func (client Client) FetchMessageDetail(ctx context.Context, messageID string) (
 		return MessageDetail{}, err
 	}
 
-	item := response.Data.Item
+	item, ok := response.Item()
+	if !ok {
+		return MessageDetail{}, fmt.Errorf("message %s not found in lark response", messageID)
+	}
 	return MessageDetail{
 		MessageID: item.MessageID,
 		ThreadID:  item.ThreadID,
@@ -137,12 +140,25 @@ func (response messageIDResponse) ID() string {
 	return response.Data.Message.MessageID
 }
 
+type messageDetailItem struct {
+	MessageID string `json:"message_id"`
+	ThreadID  string `json:"thread_id"`
+	RootID    string `json:"root_id"`
+}
+
 type messageDetailResponse struct {
 	Data struct {
-		Item struct {
-			MessageID string `json:"message_id"`
-			ThreadID  string `json:"thread_id"`
-			RootID    string `json:"root_id"`
-		} `json:"item"`
+		Item  messageDetailItem   `json:"item"`
+		Items []messageDetailItem `json:"items"`
 	} `json:"data"`
+}
+
+func (response messageDetailResponse) Item() (messageDetailItem, bool) {
+	if len(response.Data.Items) > 0 {
+		return response.Data.Items[0], true
+	}
+	if response.Data.Item.MessageID != "" || response.Data.Item.ThreadID != "" || response.Data.Item.RootID != "" {
+		return response.Data.Item, true
+	}
+	return messageDetailItem{}, false
 }

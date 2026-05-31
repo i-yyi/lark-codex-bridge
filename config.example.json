@@ -1,0 +1,8 @@
+{
+  "owner_open_id": "ou_xxx",
+  "default_work_dir": ".",
+  "state_path": "state.json",
+  "lark_cli": "lark-cli",
+  "lark_cli_no_proxy": false,
+  "codex_cli": "codex"
+}
