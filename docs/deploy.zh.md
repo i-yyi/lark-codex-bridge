@@ -33,6 +33,7 @@
    - `$HOME/.local/npm_packages/bin`
    - `$HOME/.local/go/bin`
    - `/usr/local/go/bin`
+   - 如果存在 nvm，脚本会加载 `$NVM_DIR/nvm.sh` 或 `$HOME/.nvm/nvm.sh`
 
 2. 创建目录
    - config: `$XDG_CONFIG_HOME/lark-bridge` 或 `$HOME/.config/lark-bridge`
@@ -40,9 +41,9 @@
    - binary: `$HOME/.local/bin`
 
 3. 检查依赖
-   - `npm` / `npx`：缺失时尝试用 apt/dnf/yum/brew 安装
+   - `node` / `npm` / `npx`：要求 Node.js >= 18；脚本不会用 sudo 安装 Node.js
    - `lark-cli`：缺失时用 npm 安装 `@larksuite/cli`
-   - Lark skills：缺失时执行 `npx skills add larksuite/cli -g -y`
+   - Lark skills：缺失时执行 `npx --yes skills add larksuite/cli -g -y`
    - `codex`：缺失时用 npm 安装 `@openai/codex`
    - Codex auth：没有 `OPENAI_API_KEY` 且没有 `$CODEX_HOME/auth.json` 时运行 `codex login`
    - `go`：缺失时安装 Go 到 `$HOME/.local/go`
@@ -69,10 +70,12 @@
 
 7. 环境文件
    - 写入 `$HOME/.config/lark-bridge/env`
-   - 固化 PATH
+   - 固化 PATH，包括当前使用的 Node.js bin 目录
    - 继承当前 shell 中的 `HTTP_PROXY`、`HTTPS_PROXY`、`ALL_PROXY`、`NO_PROXY`、`CODEX_HOME`
 
 8. systemd user service
+   - 要求 `systemctl --user` 可用
+   - 要求当前用户已启用 linger；未启用时先运行 `loginctl enable-linger $USER`
    - 写入 `$HOME/.config/systemd/user/lark-bridge.service`
    - 写入 `$HOME/.config/systemd/user/lark-bridge-health.service`
    - 写入 `$HOME/.config/systemd/user/lark-bridge-health.timer`

@@ -3,6 +3,7 @@ set -euo pipefail
 
 APP_NAME="lark-bridge"
 GO_VERSION="${GO_VERSION:-1.22.12}"
+MIN_NODE_MAJOR="${MIN_NODE_MAJOR:-18}"
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 CONFIG_HOME="${XDG_CONFIG_HOME:-$HOME/.config}"
@@ -86,34 +87,44 @@ bootstrap_path() {
   prepend_path "/usr/local/go/bin"
 }
 
+load_nvm() {
+  if has_cmd nvm; then
+    return
+  fi
+
+  nvm_dir="${NVM_DIR:-$HOME/.nvm}"
+  if [[ -s "$nvm_dir/nvm.sh" ]]; then
+    # shellcheck disable=SC1090
+    . "$nvm_dir/nvm.sh"
+  fi
+
+  if has_cmd nvm; then
+    nvm use --silent default >/dev/null 2>&1 || nvm use --silent node >/dev/null 2>&1 || true
+  fi
+}
+
+node_major_version() {
+  node --version | sed -E 's/^v([0-9]+).*/\1/'
+}
+
 ensure_dirs() {
   mkdir -p "$CONFIG_DIR" "$STATE_DIR" "$INSTALL_DIR"
 }
 
 ensure_npm() {
-  if has_cmd npm && has_cmd npx; then
-    log "npm found: $(npm --version)"
-    return
-  fi
+  load_nvm
 
-  if has_cmd apt-get && has_cmd sudo; then
-    log "npm not found, installing nodejs/npm with apt-get"
-    sudo apt-get update
-    sudo apt-get install -y nodejs npm
-  elif has_cmd dnf && has_cmd sudo; then
-    log "npm not found, installing nodejs/npm with dnf"
-    sudo dnf install -y nodejs npm
-  elif has_cmd yum && has_cmd sudo; then
-    log "npm not found, installing nodejs/npm with yum"
-    sudo yum install -y nodejs npm
-  elif has_cmd brew; then
-    log "npm not found, installing node with brew"
-    brew install node
-  else
-    die "npm/npx not found. Install Node.js/npm first, then rerun this script."
-  fi
+  has_cmd node || die "node not found. Install Node.js >= $MIN_NODE_MAJOR or make nvm available, then rerun."
+  has_cmd npm || die "npm not found. Install Node.js/npm first, then rerun."
+  has_cmd npx || die "npx not found. Install Node.js/npm first, then rerun."
 
-  has_cmd npm && has_cmd npx || die "npm/npx installation did not expose commands in PATH"
+  node_major="$(node_major_version)"
+  log "node found: $(node --version) ($(command -v node))"
+  log "npm found: $(npm --version) ($(command -v npm))"
+  log "npx found: $(npx --version) ($(command -v npx))"
+  if [[ ! "$node_major" =~ ^[0-9]+$ || "$node_major" -lt "$MIN_NODE_MAJOR" ]]; then
+    die "Node.js >= $MIN_NODE_MAJOR is required; current node is $(node --version) at $(command -v node). If using nvm, ensure default points to a supported version."
+  fi
 }
 
 ensure_lark_cli() {
@@ -364,8 +375,9 @@ probe_lark_permissions() {
 
 write_env_file() {
   log "writing env file: $ENV_FILE"
+  node_bin_dir="$(dirname "$(command -v node)")"
   {
-    printf 'PATH=%s:%s/bin:%s/bin:/usr/local/go/bin:/usr/local/bin:/usr/bin:/bin\n' "$INSTALL_DIR" "$NPM_PREFIX" "$LOCAL_GO_DIR"
+    printf 'PATH=%s:%s/bin:%s/bin:%s:/usr/local/go/bin:/usr/local/bin:/usr/bin:/bin\n' "$INSTALL_DIR" "$NPM_PREFIX" "$LOCAL_GO_DIR" "$node_bin_dir"
     for name in HTTP_PROXY HTTPS_PROXY ALL_PROXY NO_PROXY http_proxy https_proxy all_proxy no_proxy CODEX_HOME; do
       value="${!name:-}"
       if [[ -n "$value" ]]; then
@@ -376,8 +388,25 @@ write_env_file() {
   chmod 600 "$ENV_FILE"
 }
 
-write_systemd_service() {
+ensure_systemd_user() {
   has_cmd systemctl || die "systemctl not found; this deploy script currently targets Linux user systemd"
+  if ! systemctl --user show-environment >/dev/null 2>&1; then
+    die "systemd user manager is not reachable"
+  fi
+
+  if has_cmd loginctl; then
+    system_user="${USER:-$(id -un)}"
+    linger="$(loginctl show-user "$system_user" -p Linger --value 2>/dev/null || true)"
+    if [[ "$linger" != "yes" ]]; then
+      die "systemd linger is disabled for $system_user. Run: loginctl enable-linger $system_user"
+    fi
+    log "systemd linger enabled for $system_user"
+  else
+    warn "loginctl not found; cannot verify systemd linger"
+  fi
+}
+
+write_systemd_service() {
   mkdir -p "$SERVICE_DIR"
   log "writing systemd user service: $SERVICE_FILE"
   cat > "$SERVICE_FILE" <<EOF
@@ -400,7 +429,6 @@ EOF
 }
 
 write_systemd_health_timer() {
-  has_cmd systemctl || die "systemctl not found; this deploy script currently targets Linux user systemd"
   mkdir -p "$SERVICE_DIR"
   log "writing health service: $HEALTH_SERVICE_FILE"
   cat > "$HEALTH_SERVICE_FILE" <<EOF
@@ -493,7 +521,7 @@ check_lark_skills() {
     log "lark skills found"
     return
   fi
-  die "lark skills missing; normal deploy can install them with npx skills add larksuite/cli -g -y"
+  die "lark skills missing; normal deploy can install them with npx --yes skills add larksuite/cli -g -y"
 }
 
 check_lark_config() {
@@ -505,12 +533,7 @@ check_lark_config() {
 }
 
 check_systemd_user() {
-  check_cmd systemctl
-  if systemctl --user show-environment >/dev/null 2>&1; then
-    log "systemd user manager is reachable"
-    return
-  fi
-  die "systemd user manager is not reachable"
+  ensure_systemd_user
 }
 
 check_existing_config() {
@@ -528,8 +551,7 @@ check_existing_config() {
 preflight_check() {
   bootstrap_path
   log "running preflight checks only"
-  check_cmd npm
-  check_cmd npx
+  ensure_npm
   check_cmd lark-cli
   check_lark_skills
   check_cmd codex
@@ -560,6 +582,7 @@ main() {
   build_binary
   check_bridge_config
   probe_lark_permissions
+  ensure_systemd_user
   write_env_file
   write_systemd_service
   write_systemd_health_timer
