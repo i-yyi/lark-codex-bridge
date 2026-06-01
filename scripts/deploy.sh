@@ -644,6 +644,70 @@ detect_lark_app_id() {
   return 1
 }
 
+extract_brand() {
+  raw="$1"
+  [[ -n "$raw" ]] || return 1
+  node -e '
+const fs = require("fs");
+let data;
+try {
+  data = JSON.parse(fs.readFileSync(0, "utf8"));
+} catch {
+  process.exit(1);
+}
+function findBrand(value) {
+  if (!value || typeof value !== "object") return "";
+  if (typeof value.brand === "string" && value.brand.trim()) return value.brand.trim();
+  if (Array.isArray(value)) {
+    for (const item of value) {
+      const found = findBrand(item);
+      if (found) return found;
+    }
+    return "";
+  }
+  for (const item of Object.values(value)) {
+    const found = findBrand(item);
+    if (found) return found;
+  }
+  return "";
+}
+const brand = findBrand(data);
+if (!brand) process.exit(1);
+console.log(brand);
+' <<<"$raw" 2>/dev/null
+}
+
+detect_lark_brand() {
+  raw="$(lark-cli auth status 2>/dev/null || true)"
+  brand="$(extract_brand "$raw" || true)"
+  if [[ -n "$brand" ]]; then
+    printf '%s' "$brand"
+    return
+  fi
+
+  raw="$(lark-cli config show 2>/dev/null || true)"
+  brand="$(extract_brand "$raw" || true)"
+  if [[ -n "$brand" ]]; then
+    printf '%s' "$brand"
+    return
+  fi
+
+  printf 'feishu'
+}
+
+lark_app_console_url() {
+  app_id="$1"
+  brand="${2:-feishu}"
+  case "$brand" in
+    lark)
+      printf 'https://open.larksuite.com/app/%s/baseinfo' "$app_id"
+      ;;
+    *)
+      printf 'https://open.feishu.cn/app/%s/baseinfo' "$app_id"
+      ;;
+  esac
+}
+
 resolve_owner_open_id() {
   owner_open_id="$(detect_owner_open_id || true)"
   if [[ -n "$owner_open_id" ]]; then
@@ -707,6 +771,11 @@ write_config_if_missing() {
     log "lark_app_id detected from lark-cli"
   else
     lark_app_id="$(read_required 'lark_app_id: ')"
+  fi
+  if [[ -z "${LARK_APP_SECRET:-}" ]]; then
+    lark_brand="$(detect_lark_brand)"
+    secret_url="$(lark_app_console_url "$lark_app_id" "$lark_brand")"
+    log "open this URL to copy App Secret: $secret_url"
   fi
   lark_app_secret="${LARK_APP_SECRET:-$(read_secret 'lark_app_secret: ')}"
   default_work_dir="${DEFAULT_WORK_DIR:-$HOME}"
