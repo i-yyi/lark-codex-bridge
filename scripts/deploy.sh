@@ -13,6 +13,7 @@ LARK_SKILLS_PACKAGE="${LARK_SKILLS_PACKAGE:-larksuite/cli}"
 LARK_SKILLS_AGENT="${LARK_SKILLS_AGENT:-codex}"
 LARK_SKILLS_CHECK="${LARK_SKILLS_CHECK:-lark-shared}"
 CODEX_LOGIN_MODE="${CODEX_LOGIN_MODE:-device}"
+LARK_CONFIG_INIT_TIMEOUT="${LARK_CONFIG_INIT_TIMEOUT:-600}"
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 CONFIG_HOME="${XDG_CONFIG_HOME:-$HOME/.config}"
@@ -484,7 +485,28 @@ ensure_lark_cli_config() {
 
   log "lark-cli config is missing; starting app setup flow"
   log "Follow the browser/QR flow, approve requested app setup, then return to this terminal."
-  lark-cli config init --new
+  set +e
+  if has_cmd timeout; then
+    timeout --foreground "${LARK_CONFIG_INIT_TIMEOUT}s" lark-cli config init --new
+  else
+    lark-cli config init --new
+  fi
+  status="$?"
+  set -e
+
+  if lark-cli doctor --offline >/dev/null 2>&1; then
+    log "lark-cli local config looks present after setup"
+    return
+  fi
+
+  if [[ "$status" -eq 124 ]]; then
+    die "lark-cli config init timed out after ${LARK_CONFIG_INIT_TIMEOUT}s and local config is still missing. If you already approved it, run lark-cli doctor --offline, then rerun this deploy script."
+  fi
+  if [[ "$status" -ne 0 ]]; then
+    die "lark-cli config init failed with exit $status and local config is still missing"
+  fi
+
+  die "lark-cli config init finished but local config is still missing"
 }
 
 read_secret() {
@@ -513,12 +535,27 @@ detect_owner_open_id() {
     return
   fi
 
-  raw="$(lark-cli contact +get-user --as user --format json 2>/dev/null || true)"
-  if [[ -z "$raw" ]]; then
-    return 1
+  raw="$(lark-cli auth status 2>/dev/null || true)"
+  open_id="$(extract_open_id "$raw" || true)"
+  if [[ -n "$open_id" ]]; then
+    printf '%s' "$open_id"
+    return
   fi
 
-  open_id="$(node -e '
+  raw="$(lark-cli contact +get-user --as user --format json 2>/dev/null || true)"
+  open_id="$(extract_open_id "$raw" || true)"
+  if [[ -n "$open_id" ]]; then
+    printf '%s' "$open_id"
+    return
+  fi
+
+  return 1
+}
+
+extract_open_id() {
+  raw="$1"
+  [[ -n "$raw" ]] || return 1
+  node -e '
 const fs = require("fs");
 let data;
 try {
@@ -529,6 +566,7 @@ try {
 function findOpenId(value) {
   if (!value || typeof value !== "object") return "";
   if (typeof value.open_id === "string" && value.open_id.trim()) return value.open_id.trim();
+  if (typeof value.openId === "string" && value.openId.trim()) return value.openId.trim();
   if (Array.isArray(value)) {
     for (const item of value) {
       const found = findOpenId(item);
@@ -545,12 +583,24 @@ function findOpenId(value) {
 const openId = findOpenId(data);
 if (!openId) process.exit(1);
 console.log(openId);
-' <<<"$raw" 2>/dev/null || true)"
+' <<<"$raw" 2>/dev/null
+}
 
-  if [[ -z "$open_id" ]]; then
-    return 1
+resolve_owner_open_id() {
+  owner_open_id="$(detect_owner_open_id || true)"
+  if [[ -n "$owner_open_id" ]]; then
+    log "owner_open_id detected from lark-cli" >&2
+    printf '%s' "$owner_open_id"
+    return
   fi
-  printf '%s' "$open_id"
+
+  if [[ -t 0 ]]; then
+    warn "failed to detect owner_open_id from lark-cli"
+    read_required "owner_open_id: "
+    return
+  fi
+
+  die "failed to get owner_open_id from lark-cli. Run lark-cli auth login for the user identity, or set OWNER_OPEN_ID and rerun."
 }
 
 write_config_if_missing() {
@@ -566,8 +616,7 @@ write_config_if_missing() {
   fi
 
   log "creating $CONFIG_FILE"
-  owner_open_id="$(detect_owner_open_id)" || die "failed to get owner_open_id from lark-cli. Run lark-cli auth login for the user identity, or set OWNER_OPEN_ID and rerun."
-  log "owner_open_id detected from lark-cli"
+  owner_open_id="$(resolve_owner_open_id)"
   lark_app_id="${LARK_APP_ID:-$(read_required 'lark_app_id: ')}"
   lark_app_secret="${LARK_APP_SECRET:-$(read_secret 'lark_app_secret: ')}"
   default_work_dir="${DEFAULT_WORK_DIR:-$HOME}"
