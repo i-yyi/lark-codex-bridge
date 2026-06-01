@@ -73,7 +73,7 @@
    - 写入 `$HOME/.config/lark-bridge/env`
    - 固化 PATH，包括当前使用的 Node.js bin 目录
    - 继承当前 shell 中的 `HTTP_PROXY`、`HTTPS_PROXY`、`ALL_PROXY`、`NO_PROXY`、`CODEX_HOME`
-   - 不写入持久 npm prefix，避免和 nvm 冲突
+   - 不写入、不清理持久 npm prefix；如果已有 npm prefix/globalconfig 和 nvm 冲突，脚本会停止并提示用户手动处理
 
 8. systemd user service
    - 要求 `systemctl --user` 可用
