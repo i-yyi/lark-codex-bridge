@@ -46,7 +46,8 @@
    - `lark-cli`：缺失时用 `npm install --prefix $HOME/.local/npm_packages` 安装 `@larksuite/cli`
    - Lark skills：缺失时执行 `npx --yes skills add larksuite/cli -g -y -a codex`，只安装 Codex agent 版本
    - `codex`：缺失时用 `npm install --prefix $HOME/.local/npm_packages` 安装 `@openai/codex`
-   - Codex auth：没有 `OPENAI_API_KEY` 且没有 `$CODEX_HOME/auth.json` 时运行 `codex login`
+   - Codex auth：没有 `OPENAI_API_KEY` 且没有 `$CODEX_HOME/auth.json` 时默认运行 `codex login --device-auth`
+   - 可用 `CODEX_LOGIN_MODE=browser` 改为浏览器登录，或 `CODEX_LOGIN_MODE=skip` 跳过登录后手动处理
    - `go`：缺失时安装 Go 到 `$HOME/.local/go`
 
 4. 飞书应用初始化

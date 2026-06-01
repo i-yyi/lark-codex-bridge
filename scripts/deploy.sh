@@ -12,6 +12,7 @@ DOWNLOAD_MAX_TIME="${DOWNLOAD_MAX_TIME:-300}"
 LARK_SKILLS_PACKAGE="${LARK_SKILLS_PACKAGE:-larksuite/cli}"
 LARK_SKILLS_AGENT="${LARK_SKILLS_AGENT:-codex}"
 LARK_SKILLS_CHECK="${LARK_SKILLS_CHECK:-lark-shared}"
+CODEX_LOGIN_MODE="${CODEX_LOGIN_MODE:-device}"
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 CONFIG_HOME="${XDG_CONFIG_HOME:-$HOME/.config}"
@@ -386,10 +387,26 @@ ensure_codex_auth() {
     return
   fi
 
-  log "codex auth is missing; starting codex login"
-  codex login
+  case "$CODEX_LOGIN_MODE" in
+    skip)
+      warn "codex auth is missing; skipping login because CODEX_LOGIN_MODE=skip"
+      return
+      ;;
+    browser)
+      log "codex auth is missing; starting browser login"
+      codex login
+      ;;
+    device)
+      log "codex auth is missing; starting device login"
+      codex login --device-auth
+      ;;
+    *)
+      die "unknown CODEX_LOGIN_MODE=$CODEX_LOGIN_MODE; use device, browser, or skip"
+      ;;
+  esac
+
   if [[ -z "${OPENAI_API_KEY:-}" && ! -f "$codex_home/auth.json" ]]; then
-    die "codex login finished but auth file was not found at $codex_home/auth.json"
+    die "codex login finished but auth file was not found at $codex_home/auth.json. You can rerun with CODEX_LOGIN_MODE=skip and login manually later."
   fi
 }
 
