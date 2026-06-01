@@ -32,28 +32,25 @@ func (err *PendingRequestError) Error() string {
 }
 
 func (client *Client) RespondToPending(ctx context.Context, pending PendingRequest, decision string, onUpdate TurnUpdateFunc) (TurnResult, error) {
-	client.mu.Lock()
-	defer client.mu.Unlock()
-
 	result, err := pendingResponse(pending.Method, decision)
 	if err != nil {
 		return TurnResult{}, err
 	}
-	if err := client.writeLocked(map[string]any{
+	if err := client.write(map[string]any{
 		"id":     pending.RequestID,
 		"result": result,
 	}); err != nil {
 		return TurnResult{}, err
 	}
 
-	return client.drainTurnLocked(ctx, pending.ThreadID, pending.TurnID, onUpdate)
+	return client.drainTurn(ctx, pending.ThreadID, pending.TurnID, onUpdate)
 }
 
-func (client *Client) drainTurnLocked(ctx context.Context, threadID string, turnID string, onUpdate TurnUpdateFunc) (TurnResult, error) {
+func (client *Client) drainTurn(ctx context.Context, threadID string, turnID string, onUpdate TurnUpdateFunc) (TurnResult, error) {
 	var deltas strings.Builder
 	var finalText string
 	for {
-		message, err := client.readLocked(ctx)
+		message, err := client.readEvent(ctx)
 		if err != nil {
 			return TurnResult{}, err
 		}

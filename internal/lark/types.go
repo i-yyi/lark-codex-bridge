@@ -43,14 +43,8 @@ type CardActionEvent struct {
 }
 
 type MessageDetail struct {
-	MessageID string
-	ThreadID  string
-	RootID    string
-}
-
-func SessionKey(detail MessageDetail) string {
-	key, _ := SessionKeyReason(detail)
-	return key
+	ThreadID string
+	RootID   string
 }
 
 func SessionKeyReason(detail MessageDetail) (string, string) {
@@ -65,8 +59,7 @@ func SessionKeyReason(detail MessageDetail) (string, string) {
 
 func DetailFromEvent(event MessageEvent) MessageDetail {
 	return MessageDetail{
-		MessageID: strings.TrimSpace(event.MessageID),
-		ThreadID:  strings.TrimSpace(event.ThreadID),
-		RootID:    strings.TrimSpace(event.RootID),
+		ThreadID: strings.TrimSpace(event.ThreadID),
+		RootID:   strings.TrimSpace(event.RootID),
 	}
 }

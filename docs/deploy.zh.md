@@ -2,6 +2,19 @@
 
 目标：让其他人在一台 Linux 服务器上从仓库目录执行 `./scripts/deploy.sh` 后得到一个可常驻的 `lark-bridge` user service。
 
+## 命令入口
+
+```bash
+./scripts/deploy.sh --check
+./scripts/deploy.sh
+```
+
+可选参数：
+
+- `--check`：只做预检，不安装、不登录、不写配置、不写 systemd service。
+- `--use-local-config`：目标配置不存在时，显式允许复制仓库根目录的 `config.json`。
+- `--no-probe`：部署时跳过主动飞书权限探测。
+
 ## 支持范围
 
 - Linux + `systemd --user`
@@ -41,12 +54,16 @@
 
 5. 配置文件
    - 默认路径：`$HOME/.config/lark-bridge/config.json`
-   - 如果仓库根目录已有 `config.json`，复制过去并设为 `0600`
+   - 默认不会复制仓库根目录的 `config.json`
+   - 只有传 `--use-local-config` 时，才复制仓库根目录的 `config.json` 并设为 `0600`
    - 否则交互输入 `owner_open_id`、`lark_app_id`、`lark_app_secret`
 
 6. 编译安装
    - `go build -o $HOME/.local/bin/lark-bridge ./cmd/lark-bridge`
    - 执行 `lark-bridge --config ... --check-config`
+   - 执行 `lark-bridge --config ... --probe-lark`
+   - probe 会发送测试文本、添加表情、发送测试卡片、patch 测试卡片
+   - 如果不想发送测试消息，传 `--no-probe`
 
 7. 环境文件
    - 写入 `$HOME/.config/lark-bridge/env`

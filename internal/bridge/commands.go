@@ -13,8 +13,9 @@ const (
 	CommandProjects CommandName = "projects"
 	CommandCreate   CommandName = "create"
 	CommandAttach   CommandName = "attach"
+	CommandHistory  CommandName = "history"
+	CommandImport   CommandName = "import"
 	CommandReset    CommandName = "reset"
-	CommandStop     CommandName = "stop"
 	CommandApprove  CommandName = "approve"
 	CommandDeny     CommandName = "deny"
 	CommandCancel   CommandName = "cancel"
@@ -55,10 +56,12 @@ func ParseCommand(text string) Command {
 		cmd.Name = CommandCreate
 	case "attach":
 		cmd.Name = CommandAttach
+	case "history":
+		cmd.Name = CommandHistory
+	case "import":
+		cmd.Name = CommandImport
 	case "reset":
 		cmd.Name = CommandReset
-	case "stop":
-		cmd.Name = CommandStop
 	case "approve":
 		cmd.Name = CommandApprove
 	case "deny":

@@ -70,9 +70,8 @@ func (client Client) FetchMessageDetail(ctx context.Context, messageID string) (
 	}
 	item := resp.Data.Items[0]
 	return MessageDetail{
-		MessageID: stringValue(item.MessageId),
-		ThreadID:  stringValue(item.ThreadId),
-		RootID:    stringValue(item.RootId),
+		ThreadID: stringValue(item.ThreadId),
+		RootID:   stringValue(item.RootId),
 	}, nil
 }
 

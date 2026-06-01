@@ -21,19 +21,11 @@ type Session struct {
 	ServiceTier     string `json:"service_tier,omitempty"`
 }
 
-func New(defaultWorkDir string) State {
-	return State{
-		Sessions: map[string]Session{
-			"default": {WorkDir: cleanDefaultWorkDir(defaultWorkDir)},
-		},
-	}
-}
-
-func Load(path string, defaultWorkDir string) (State, error) {
+func Load(path string) (State, error) {
 	data, err := os.ReadFile(path)
 	if err != nil {
 		if errors.Is(err, os.ErrNotExist) {
-			return New(defaultWorkDir), nil
+			return State{Sessions: make(map[string]Session)}, nil
 		}
 		return State{}, fmt.Errorf("read state %q: %w", path, err)
 	}
@@ -46,7 +38,7 @@ func Load(path string, defaultWorkDir string) (State, error) {
 	if state.Sessions == nil {
 		state.Sessions = make(map[string]Session)
 	}
-	state.EnsureSession("default", defaultWorkDir)
+	delete(state.Sessions, "default")
 
 	return state, nil
 }

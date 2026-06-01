@@ -26,7 +26,9 @@ type Client struct {
 	nextID   atomic.Int64
 	cmd      *exec.Cmd
 	stdin    io.WriteCloser
-	messages chan wireMessage
+	incoming chan wireMessage
+	events   chan wireMessage
+	replies  map[string]chan wireMessage
 	done     chan error
 }
 
@@ -37,6 +39,7 @@ type TurnResult struct {
 }
 
 type TurnUpdateFunc func(text string)
+type TurnStartedFunc func(turnID string)
 
 type RPCError struct {
 	Code    int64           `json:"code"`
@@ -69,9 +72,9 @@ func NewClient(bin string, model string, reasoningEffort string, serviceTier str
 
 func (client *Client) Start(ctx context.Context) error {
 	client.mu.Lock()
-	defer client.mu.Unlock()
 
 	if client.cmd != nil {
+		client.mu.Unlock()
 		return nil
 	}
 
@@ -83,42 +86,52 @@ func (client *Client) Start(ctx context.Context) error {
 	cmd := exec.Command(client.Bin, args...)
 	stdin, err := cmd.StdinPipe()
 	if err != nil {
+		client.mu.Unlock()
 		return fmt.Errorf("open codex stdin: %w", err)
 	}
 	stdout, err := cmd.StdoutPipe()
 	if err != nil {
+		client.mu.Unlock()
 		return fmt.Errorf("open codex stdout: %w", err)
 	}
 	stderr, err := cmd.StderrPipe()
 	if err != nil {
+		client.mu.Unlock()
 		return fmt.Errorf("open codex stderr: %w", err)
 	}
 	if err := cmd.Start(); err != nil {
+		client.mu.Unlock()
 		return fmt.Errorf("start codex app-server: %w", err)
 	}
 
 	client.cmd = cmd
 	client.stdin = stdin
-	client.messages = make(chan wireMessage, 64)
+	client.incoming = make(chan wireMessage, 64)
+	client.events = make(chan wireMessage, 128)
+	client.replies = make(map[string]chan wireMessage)
 	client.done = make(chan error, 1)
 	client.nextID.Store(0)
+	incoming := client.incoming
+	events := client.events
+	client.mu.Unlock()
 
-	go scanJSONLines(stdout, client.messages)
+	go client.dispatchMessages(incoming, events)
+	go scanJSONLines(stdout, incoming)
 	go scanStderr(stderr)
-	go waitForExit(cmd, client.messages, client.done)
+	go waitForExit(cmd, client.done)
 
-	if _, err := client.requestLocked(ctx, "initialize", map[string]any{
+	if _, err := client.request(ctx, "initialize", map[string]any{
 		"clientInfo": map[string]string{
 			"name":    "lark-bridge",
 			"version": "0.0.0",
 		},
 		"capabilities": nil,
 	}); err != nil {
-		_ = client.closeLocked()
+		_ = client.Close()
 		return err
 	}
-	if err := client.writeLocked(map[string]any{"method": "initialized"}); err != nil {
-		_ = client.closeLocked()
+	if err := client.write(map[string]any{"method": "initialized"}); err != nil {
+		_ = client.Close()
 		return err
 	}
 
@@ -140,9 +153,6 @@ func (client *Client) Close() error {
 }
 
 func (client *Client) StartThread(ctx context.Context, cwd string, ephemeral bool) (string, error) {
-	client.mu.Lock()
-	defer client.mu.Unlock()
-
 	params := map[string]any{}
 	if cwd = strings.TrimSpace(cwd); cwd != "" {
 		params["cwd"] = cwd
@@ -151,7 +161,7 @@ func (client *Client) StartThread(ctx context.Context, cwd string, ephemeral boo
 		params["ephemeral"] = true
 	}
 
-	result, err := client.requestLocked(ctx, "thread/start", params)
+	result, err := client.request(ctx, "thread/start", params)
 	if err != nil {
 		return "", err
 	}
@@ -176,9 +186,6 @@ func (client *Client) ResumeThread(ctx context.Context, threadID string, cwd str
 		return "", fmt.Errorf("thread id is required")
 	}
 
-	client.mu.Lock()
-	defer client.mu.Unlock()
-
 	params := map[string]any{
 		"threadId": threadID,
 	}
@@ -186,7 +193,7 @@ func (client *Client) ResumeThread(ctx context.Context, threadID string, cwd str
 		params["cwd"] = cwd
 	}
 
-	result, err := client.requestLocked(ctx, "thread/resume", params)
+	result, err := client.request(ctx, "thread/resume", params)
 	if err != nil {
 		return "", err
 	}
@@ -205,7 +212,7 @@ func (client *Client) ResumeThread(ctx context.Context, threadID string, cwd str
 	return response.Thread.ID, nil
 }
 
-func (client *Client) RunTurn(ctx context.Context, threadID string, cwd string, text string, onUpdate TurnUpdateFunc) (TurnResult, error) {
+func (client *Client) RunTurn(ctx context.Context, threadID string, cwd string, text string, onUpdate TurnUpdateFunc, onStarted TurnStartedFunc) (TurnResult, error) {
 	threadID = strings.TrimSpace(threadID)
 	text = strings.TrimSpace(text)
 	if threadID == "" {
@@ -214,9 +221,6 @@ func (client *Client) RunTurn(ctx context.Context, threadID string, cwd string, 
 	if text == "" {
 		return TurnResult{}, fmt.Errorf("text is required")
 	}
-
-	client.mu.Lock()
-	defer client.mu.Unlock()
 
 	params := map[string]any{
 		"threadId": threadID,
@@ -232,7 +236,7 @@ func (client *Client) RunTurn(ctx context.Context, threadID string, cwd string, 
 		params["cwd"] = cwd
 	}
 
-	result, err := client.requestLocked(ctx, "turn/start", params)
+	result, err := client.request(ctx, "turn/start", params)
 	if err != nil {
 		return TurnResult{}, err
 	}
@@ -249,49 +253,83 @@ func (client *Client) RunTurn(ctx context.Context, threadID string, cwd string, 
 	if turnID == "" {
 		return TurnResult{}, fmt.Errorf("turn/start response missing turn id")
 	}
-
-	return client.drainTurnLocked(ctx, threadID, turnID, onUpdate)
-}
-
-func (client *Client) requestLocked(ctx context.Context, method string, params any) (json.RawMessage, error) {
-	if client.cmd == nil || client.stdin == nil {
-		return nil, fmt.Errorf("codex client is not started")
+	if onStarted != nil {
+		onStarted(turnID)
 	}
 
+	return client.drainTurn(ctx, threadID, turnID, onUpdate)
+}
+
+func (client *Client) SteerTurn(ctx context.Context, threadID string, turnID string, text string) error {
+	threadID = strings.TrimSpace(threadID)
+	turnID = strings.TrimSpace(turnID)
+	text = strings.TrimSpace(text)
+	if threadID == "" {
+		return fmt.Errorf("thread id is required")
+	}
+	if turnID == "" {
+		return fmt.Errorf("turn id is required")
+	}
+	if text == "" {
+		return fmt.Errorf("text is required")
+	}
+
+	_, err := client.request(ctx, "turn/steer", map[string]any{
+		"threadId":       threadID,
+		"expectedTurnId": turnID,
+		"input": []map[string]any{
+			{
+				"type":          "text",
+				"text":          text,
+				"text_elements": []any{},
+			},
+		},
+	})
+	return err
+}
+
+func (client *Client) request(ctx context.Context, method string, params any) (json.RawMessage, error) {
 	id := client.nextID.Add(1)
+	key := strconv.FormatInt(id, 10)
+	reply := make(chan wireMessage, 1)
+
+	client.mu.Lock()
+	if client.cmd == nil || client.stdin == nil {
+		client.mu.Unlock()
+		return nil, fmt.Errorf("codex client is not started")
+	}
+	client.replies[key] = reply
 	if err := client.writeLocked(map[string]any{
 		"id":     id,
 		"method": method,
 		"params": params,
 	}); err != nil {
+		delete(client.replies, key)
+		client.mu.Unlock()
 		return nil, err
 	}
+	client.mu.Unlock()
 
-	for {
-		message, err := client.readLocked(ctx)
-		if err != nil {
-			return nil, err
+	select {
+	case <-ctx.Done():
+		client.forgetReply(key)
+		return nil, ctx.Err()
+	case message := <-reply:
+		if message.err != nil {
+			return nil, message.err
 		}
 		if message.Error != nil {
-			if message.matchesID(id) {
-				return nil, message.Error
-			}
-			continue
+			return nil, message.Error
 		}
-		if message.matchesID(id) {
-			return message.Result, nil
-		}
-		if message.isServerRequest() {
-			return nil, fmt.Errorf("codex requested user interaction before %s completed: %s", method, message.Method)
-		}
+		return message.Result, nil
 	}
 }
 
-func (client *Client) readLocked(ctx context.Context) (wireMessage, error) {
+func (client *Client) readEvent(ctx context.Context) (wireMessage, error) {
 	select {
 	case <-ctx.Done():
 		return wireMessage{}, ctx.Err()
-	case message, ok := <-client.messages:
+	case message, ok := <-client.events:
 		if !ok {
 			return wireMessage{}, fmt.Errorf("codex app-server message stream closed")
 		}
@@ -300,6 +338,15 @@ func (client *Client) readLocked(ctx context.Context) (wireMessage, error) {
 		}
 		return message, nil
 	}
+}
+
+func (client *Client) write(value any) error {
+	client.mu.Lock()
+	defer client.mu.Unlock()
+	if client.cmd == nil || client.stdin == nil {
+		return fmt.Errorf("codex client is not started")
+	}
+	return client.writeLocked(value)
 }
 
 func (client *Client) writeLocked(value any) error {
@@ -325,12 +372,23 @@ func (client *Client) closeLocked() error {
 
 	cmd := client.cmd
 	client.cmd = nil
+	for key, reply := range client.replies {
+		delete(client.replies, key)
+		reply <- wireMessage{err: fmt.Errorf("codex client closed")}
+		close(reply)
+	}
+	client.incoming = nil
+	client.events = nil
+	client.replies = nil
 	done := client.done
 	client.done = nil
 	if cmd.Process != nil {
 		_ = cmd.Process.Kill()
 	}
-	err := <-done
+	var err error
+	if done != nil {
+		err = <-done
+	}
 	if err != nil {
 		var exitError *exec.ExitError
 		if errors.As(err, &exitError) {
@@ -338,6 +396,58 @@ func (client *Client) closeLocked() error {
 		}
 	}
 	return err
+}
+
+func (client *Client) dispatchMessages(incoming <-chan wireMessage, events chan<- wireMessage) {
+	for message := range incoming {
+		if message.err != nil {
+			client.failReplies(message)
+			events <- message
+			continue
+		}
+		if len(message.ID) > 0 && message.Method == "" {
+			key := requestIDKey(message.ID)
+			client.deliverReply(key, message)
+			continue
+		}
+		events <- message
+	}
+	client.failReplies(wireMessage{err: fmt.Errorf("codex app-server message stream closed")})
+	close(events)
+}
+
+func (client *Client) deliverReply(key string, message wireMessage) bool {
+	client.mu.Lock()
+	defer client.mu.Unlock()
+	if client.replies == nil {
+		return false
+	}
+	reply := client.replies[key]
+	if reply == nil {
+		return false
+	}
+	delete(client.replies, key)
+	reply <- message
+	close(reply)
+	return true
+}
+
+func (client *Client) forgetReply(key string) {
+	client.mu.Lock()
+	defer client.mu.Unlock()
+	if client.replies != nil {
+		delete(client.replies, key)
+	}
+}
+
+func (client *Client) failReplies(message wireMessage) {
+	client.mu.Lock()
+	defer client.mu.Unlock()
+	for key, reply := range client.replies {
+		delete(client.replies, key)
+		reply <- message
+		close(reply)
+	}
 }
 
 type wireMessage struct {
@@ -350,19 +460,16 @@ type wireMessage struct {
 	err error
 }
 
-func (message wireMessage) matchesID(id int64) bool {
-	if len(message.ID) == 0 {
-		return false
-	}
+func requestIDKey(raw json.RawMessage) string {
 	var number int64
-	if err := json.Unmarshal(message.ID, &number); err == nil {
-		return number == id
+	if err := json.Unmarshal(raw, &number); err == nil {
+		return strconv.FormatInt(number, 10)
 	}
 	var text string
-	if err := json.Unmarshal(message.ID, &text); err == nil {
-		return text == strconv.FormatInt(id, 10)
+	if err := json.Unmarshal(raw, &text); err == nil {
+		return text
 	}
-	return false
+	return string(raw)
 }
 
 func (message wireMessage) isServerRequest() bool {
@@ -370,6 +477,7 @@ func (message wireMessage) isServerRequest() bool {
 }
 
 func scanJSONLines(reader io.Reader, messages chan<- wireMessage) {
+	defer close(messages)
 	scanner := bufio.NewScanner(reader)
 	scanner.Buffer(make([]byte, 64*1024), 16*1024*1024)
 	for scanner.Scan() {
@@ -383,7 +491,9 @@ func scanJSONLines(reader io.Reader, messages chan<- wireMessage) {
 	}
 	if err := scanner.Err(); err != nil {
 		messages <- wireMessage{err: fmt.Errorf("read codex stdout: %w", err)}
+		return
 	}
+	messages <- wireMessage{err: fmt.Errorf("codex app-server stdout closed")}
 }
 
 func scanStderr(reader io.Reader) {
@@ -393,17 +503,6 @@ func scanStderr(reader io.Reader) {
 	}
 }
 
-func waitForExit(cmd *exec.Cmd, messages chan<- wireMessage, done chan<- error) {
-	err := cmd.Wait()
-	done <- err
-	if err == nil {
-		messages <- wireMessage{err: fmt.Errorf("codex app-server exited")}
-		return
-	}
-	var exitError *exec.ExitError
-	if errors.As(err, &exitError) {
-		messages <- wireMessage{err: fmt.Errorf("codex app-server exited: %w", err)}
-		return
-	}
-	messages <- wireMessage{err: fmt.Errorf("wait codex app-server: %w", err)}
+func waitForExit(cmd *exec.Cmd, done chan<- error) {
+	done <- cmd.Wait()
 }

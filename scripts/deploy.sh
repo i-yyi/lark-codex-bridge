@@ -18,6 +18,42 @@ SERVICE_DIR="$CONFIG_HOME/systemd/user"
 SERVICE_FILE="$SERVICE_DIR/$APP_NAME.service"
 HEALTH_SERVICE_FILE="$SERVICE_DIR/$APP_NAME-health.service"
 HEALTH_TIMER_FILE="$SERVICE_DIR/$APP_NAME-health.timer"
+CHECK_ONLY=false
+USE_LOCAL_CONFIG=false
+PROBE_LARK=true
+
+usage() {
+  cat <<EOF
+Usage: ./scripts/deploy.sh [--check] [--use-local-config] [--no-probe]
+
+  --check             Run preflight checks only. Do not install, login, write config, or write services.
+  --use-local-config  If target config is missing, copy ./config.json from this repo.
+  --no-probe          Skip active Feishu permission probe during deploy.
+EOF
+}
+
+parse_args() {
+  for arg in "$@"; do
+    case "$arg" in
+      --check)
+        CHECK_ONLY=true
+        ;;
+      --use-local-config)
+        USE_LOCAL_CONFIG=true
+        ;;
+      --no-probe)
+        PROBE_LARK=false
+        ;;
+      -h | --help)
+        usage
+        exit 0
+        ;;
+      *)
+        die "unknown argument: $arg"
+        ;;
+    esac
+  done
+}
 
 log() {
   printf '[%s] %s\n' "$APP_NAME" "$*"
@@ -81,7 +117,7 @@ ensure_npm() {
 }
 
 ensure_lark_cli() {
- if has_cmd lark-cli; then
+  if has_cmd lark-cli; then
     log "lark-cli found: $(lark-cli --version)"
     return
   fi
@@ -223,7 +259,7 @@ write_config_if_missing() {
     return
   fi
 
-  if [[ -f "$ROOT_DIR/config.json" ]]; then
+  if [[ "$USE_LOCAL_CONFIG" == true && -f "$ROOT_DIR/config.json" ]]; then
     log "copying existing repo config to $CONFIG_FILE"
     install -m 600 "$ROOT_DIR/config.json" "$CONFIG_FILE"
     return
@@ -268,6 +304,15 @@ build_binary() {
 check_bridge_config() {
   log "checking lark-bridge config"
   (cd "$CONFIG_DIR" && "$INSTALL_DIR/$APP_NAME" --config "$CONFIG_FILE" --check-config)
+}
+
+probe_lark_permissions() {
+  if [[ "$PROBE_LARK" != true ]]; then
+    log "skipping Feishu permission probe"
+    return
+  fi
+  log "probing Feishu bot permissions"
+  (cd "$CONFIG_DIR" && "$INSTALL_DIR/$APP_NAME" --config "$CONFIG_FILE" --probe-lark)
 }
 
 write_env_file() {
@@ -367,7 +412,95 @@ approve the missing scope/event, publish the app version if required, then:
 EOF
 }
 
+check_cmd() {
+  if has_cmd "$1"; then
+    log "$1 found: $(command -v "$1")"
+    return
+  fi
+  die "$1 not found"
+}
+
+check_go() {
+  if has_cmd go; then
+    log "go found: $(go version)"
+    return
+  fi
+  if [[ -x "$LOCAL_GO_DIR/bin/go" ]]; then
+    log "go found: $("$LOCAL_GO_DIR/bin/go" version)"
+    return
+  fi
+  die "go not found"
+}
+
+check_codex_auth() {
+  codex_home="${CODEX_HOME:-$HOME/.codex}"
+  if [[ -n "${OPENAI_API_KEY:-}" || -f "$codex_home/auth.json" ]]; then
+    log "codex auth/config found"
+    return
+  fi
+  die "codex auth missing; run codex login or set OPENAI_API_KEY"
+}
+
+check_lark_skills() {
+  if [[ -f "$HOME/.agents/skills/lark-shared/SKILL.md" && -f "$HOME/.agents/skills/lark-im/SKILL.md" ]]; then
+    log "lark skills found"
+    return
+  fi
+  die "lark skills missing; normal deploy can install them with npx skills add larksuite/cli -g -y"
+}
+
+check_lark_config() {
+  if lark-cli doctor --offline >/dev/null 2>&1; then
+    log "lark-cli local config found"
+    return
+  fi
+  die "lark-cli config missing; normal deploy can start lark-cli config init --new"
+}
+
+check_systemd_user() {
+  check_cmd systemctl
+  if systemctl --user show-environment >/dev/null 2>&1; then
+    log "systemd user manager is reachable"
+    return
+  fi
+  die "systemd user manager is not reachable"
+}
+
+check_existing_config() {
+  if [[ ! -f "$CONFIG_FILE" ]]; then
+    die "config missing: $CONFIG_FILE"
+  fi
+  check_go
+  go_bin="$(command -v go || true)"
+  if [[ -z "$go_bin" && -x "$LOCAL_GO_DIR/bin/go" ]]; then
+    go_bin="$LOCAL_GO_DIR/bin/go"
+  fi
+  (cd "$ROOT_DIR" && "$go_bin" run ./cmd/lark-bridge --config "$CONFIG_FILE" --check-config)
+}
+
+preflight_check() {
+  bootstrap_path
+  log "running preflight checks only"
+  check_cmd npm
+  check_cmd npx
+  check_cmd lark-cli
+  check_lark_skills
+  check_cmd codex
+  check_codex_auth
+  check_go
+  check_lark_config
+  check_systemd_user
+  check_existing_config
+  log "preflight ok"
+}
+
 main() {
+  parse_args "$@"
+  if [[ "$CHECK_ONLY" == true ]]; then
+    preflight_check
+    return
+  fi
+
   bootstrap_path
   ensure_dirs
   ensure_npm
@@ -379,6 +512,7 @@ main() {
   write_config_if_missing
   build_binary
   check_bridge_config
+  probe_lark_permissions
   write_env_file
   write_systemd_service
   write_systemd_health_timer
