@@ -387,9 +387,24 @@ ensure_codex_auth() {
     return
   fi
 
-  case "$CODEX_LOGIN_MODE" in
+  login_mode="$CODEX_LOGIN_MODE"
+  if [[ -t 0 ]]; then
+    printf '[%s] codex auth is missing. Choose login mode:\n' "$APP_NAME"
+    printf '  1) device auth (recommended for remote/headless servers)\n'
+    printf '  2) browser auth (local desktop/browser available)\n'
+    printf '  3) skip for now\n'
+    read -r -p "Select [1]: " login_choice
+    case "${login_choice:-1}" in
+      1 | device) login_mode="device" ;;
+      2 | browser) login_mode="browser" ;;
+      3 | skip) login_mode="skip" ;;
+      *) die "unknown Codex login choice: $login_choice" ;;
+    esac
+  fi
+
+  case "$login_mode" in
     skip)
-      warn "codex auth is missing; skipping login because CODEX_LOGIN_MODE=skip"
+      warn "codex auth is missing; skipping login"
       return
       ;;
     browser)
@@ -401,12 +416,12 @@ ensure_codex_auth() {
       codex login --device-auth
       ;;
     *)
-      die "unknown CODEX_LOGIN_MODE=$CODEX_LOGIN_MODE; use device, browser, or skip"
+      die "unknown Codex login mode: $login_mode; use device, browser, or skip"
       ;;
   esac
 
   if [[ -z "${OPENAI_API_KEY:-}" && ! -f "$codex_home/auth.json" ]]; then
-    die "codex login finished but auth file was not found at $codex_home/auth.json. You can rerun with CODEX_LOGIN_MODE=skip and login manually later."
+    die "codex login finished but auth file was not found at $codex_home/auth.json. You can choose skip and login manually later."
   fi
 }
 
