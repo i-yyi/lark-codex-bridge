@@ -65,7 +65,9 @@
    - 可用环境变量 `OWNER_OPEN_ID` 显式覆盖
    - `lark_app_secret` 无法从 lark-cli 明文读取；脚本会打印开发者后台 App 基础信息页 URL，用户复制 App Secret 后交互输入，也可用 `LARK_APP_SECRET` 提供
    - App Secret 写入前会调用飞书 token 接口验证；脚本会依次尝试 `open.larkoffice.com`、`open.feishu.cn`、`open.larksuite.com`
-   - 已有配置验证失败时会提示重新输入并覆盖错误值；如果确认后台凭证无误，也可以选择跳过部署期校验继续写入
+   - 已有配置默认不重新校验或改写密钥，避免部署时被网络探针卡住；后续 `--check-config` / `--probe-lark` 会验证运行可用性
+   - 如果需要强制校验已有配置，可设置 `LARK_VALIDATE_EXISTING_CONFIG=true`
+   - 新写入凭证验证失败时会提示重新输入并覆盖错误值；如果确认后台凭证无误，也可以选择跳过部署期校验继续写入
 
 6. 编译安装
    - `go build -o $HOME/.local/bin/lark-bridge ./cmd/lark-bridge`

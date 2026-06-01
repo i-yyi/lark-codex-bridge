@@ -16,6 +16,7 @@ CODEX_LOGIN_MODE="${CODEX_LOGIN_MODE:-device}"
 LARK_CONFIG_INIT_TIMEOUT="${LARK_CONFIG_INIT_TIMEOUT:-600}"
 LARK_AUTH_DOMAINS="${LARK_AUTH_DOMAINS:-contact,im,docs,drive,base,sheets,wiki}"
 LARK_VALIDATE_CREDENTIALS="${LARK_VALIDATE_CREDENTIALS:-true}"
+LARK_VALIDATE_EXISTING_CONFIG="${LARK_VALIDATE_EXISTING_CONFIG:-false}"
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 CONFIG_HOME="${XDG_CONFIG_HOME:-$HOME/.config}"
@@ -725,6 +726,7 @@ validate_lark_app_credentials() {
   fi
 
   api_hosts="$(lark_api_hosts "$brand")"
+  log "validating lark app credentials via: $api_hosts" >&2
   APP_ID="$app_id" APP_SECRET="$app_secret" API_HOSTS="$api_hosts" node <<'NODE'
 const https = require("https");
 
@@ -735,6 +737,7 @@ const payload = JSON.stringify({ app_id: appID, app_secret: appSecret });
 
 function requestToken(host) {
   return new Promise((resolve) => {
+    console.error(`credential validation trying ${host}`);
     const req = https.request({
       hostname: host,
       path: "/open-apis/auth/v3/tenant_access_token/internal",
@@ -870,6 +873,11 @@ read_valid_lark_app_secret() {
 }
 
 ensure_existing_config_valid() {
+  if [[ "$LARK_VALIDATE_EXISTING_CONFIG" != true ]]; then
+    log "skipping existing config credential validation; later checks will verify runtime usability"
+    return
+  fi
+
   app_id="$(config_value lark_app_id || true)"
   app_secret="$(config_value lark_app_secret || true)"
   if [[ -z "$app_id" || -z "$app_secret" ]]; then
