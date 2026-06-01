@@ -16,7 +16,7 @@ CODEX_LOGIN_MODE="${CODEX_LOGIN_MODE:-device}"
 LARK_CONFIG_INIT_TIMEOUT="${LARK_CONFIG_INIT_TIMEOUT:-600}"
 LARK_AUTH_DOMAINS="${LARK_AUTH_DOMAINS:-contact,im,docs,drive,base,sheets,wiki}"
 LARK_VALIDATE_CREDENTIALS="${LARK_VALIDATE_CREDENTIALS:-true}"
-LARK_VALIDATE_EXISTING_CONFIG="${LARK_VALIDATE_EXISTING_CONFIG:-false}"
+LARK_CREDENTIAL_TIMEOUT_MS="${LARK_CREDENTIAL_TIMEOUT_MS:-8000}"
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 CONFIG_HOME="${XDG_CONFIG_HOME:-$HOME/.config}"
@@ -710,7 +710,7 @@ lark_api_hosts() {
       printf 'open.larksuite.com open.larkoffice.com open.feishu.cn'
       ;;
     *)
-      printf 'open.larkoffice.com open.feishu.cn open.larksuite.com'
+      printf 'open.feishu.cn open.larkoffice.com open.larksuite.com'
       ;;
   esac
 }
@@ -727,12 +727,13 @@ validate_lark_app_credentials() {
 
   api_hosts="$(lark_api_hosts "$brand")"
   log "validating lark app credentials via: $api_hosts" >&2
-  APP_ID="$app_id" APP_SECRET="$app_secret" API_HOSTS="$api_hosts" node <<'NODE'
+  APP_ID="$app_id" APP_SECRET="$app_secret" API_HOSTS="$api_hosts" CREDENTIAL_TIMEOUT_MS="$LARK_CREDENTIAL_TIMEOUT_MS" node <<'NODE'
 const https = require("https");
 
 const appID = process.env.APP_ID;
 const appSecret = process.env.APP_SECRET;
 const hosts = (process.env.API_HOSTS || "").split(/\s+/).filter(Boolean);
+const timeoutMs = Number(process.env.CREDENTIAL_TIMEOUT_MS || 8000);
 const payload = JSON.stringify({ app_id: appID, app_secret: appSecret });
 
 function requestToken(host) {
@@ -740,13 +741,13 @@ function requestToken(host) {
     console.error(`credential validation trying ${host}`);
     const req = https.request({
       hostname: host,
-      path: "/open-apis/auth/v3/tenant_access_token/internal",
+      path: "/open-apis/auth/v3/app_access_token/internal",
       method: "POST",
       headers: {
         "Content-Type": "application/json; charset=utf-8",
         "Content-Length": Buffer.byteLength(payload),
       },
-      timeout: 15000,
+      timeout: timeoutMs,
     }, (res) => {
       let body = "";
       res.setEncoding("utf8");
@@ -759,7 +760,7 @@ function requestToken(host) {
           resolve({ ok: false, host, detail: `invalid JSON response: HTTP ${res.statusCode}` });
           return;
         }
-        if (data.code === 0 && data.tenant_access_token) {
+        if (data.code === 0 && data.app_access_token) {
           resolve({ ok: true, host });
           return;
         }
@@ -873,11 +874,6 @@ read_valid_lark_app_secret() {
 }
 
 ensure_existing_config_valid() {
-  if [[ "$LARK_VALIDATE_EXISTING_CONFIG" != true ]]; then
-    log "skipping existing config credential validation; later checks will verify runtime usability"
-    return
-  fi
-
   app_id="$(config_value lark_app_id || true)"
   app_secret="$(config_value lark_app_secret || true)"
   if [[ -z "$app_id" || -z "$app_secret" ]]; then
