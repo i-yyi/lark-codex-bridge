@@ -15,6 +15,7 @@ LARK_SKILLS_CHECK="${LARK_SKILLS_CHECK:-lark-shared}"
 CODEX_LOGIN_MODE="${CODEX_LOGIN_MODE:-device}"
 LARK_CONFIG_INIT_TIMEOUT="${LARK_CONFIG_INIT_TIMEOUT:-600}"
 LARK_AUTH_DOMAINS="${LARK_AUTH_DOMAINS:-contact,im,docs,drive,base,sheets,wiki}"
+LARK_VALIDATE_CREDENTIALS="${LARK_VALIDATE_CREDENTIALS:-true}"
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 CONFIG_HOME="${XDG_CONFIG_HOME:-$HOME/.config}"
@@ -697,15 +698,161 @@ detect_lark_brand() {
 
 lark_app_console_url() {
   app_id="$1"
-  brand="${2:-feishu}"
+  printf 'https://open.larkoffice.com/app/%s/baseinfo' "$app_id"
+}
+
+lark_api_host() {
+  brand="${1:-feishu}"
   case "$brand" in
     lark)
-      printf 'https://open.larksuite.com/app/%s/baseinfo' "$app_id"
+      printf 'open.larksuite.com'
       ;;
     *)
-      printf 'https://open.feishu.cn/app/%s/baseinfo' "$app_id"
+      printf 'open.feishu.cn'
       ;;
   esac
+}
+
+validate_lark_app_credentials() {
+  app_id="$1"
+  app_secret="$2"
+  brand="${3:-feishu}"
+
+  if [[ "$LARK_VALIDATE_CREDENTIALS" != true ]]; then
+    warn "skipping lark app credential validation because LARK_VALIDATE_CREDENTIALS=$LARK_VALIDATE_CREDENTIALS"
+    return 0
+  fi
+
+  api_host="$(lark_api_host "$brand")"
+  APP_ID="$app_id" APP_SECRET="$app_secret" API_HOST="$api_host" node <<'NODE'
+const https = require("https");
+
+const appID = process.env.APP_ID;
+const appSecret = process.env.APP_SECRET;
+const host = process.env.API_HOST;
+const payload = JSON.stringify({ app_id: appID, app_secret: appSecret });
+
+const req = https.request({
+  hostname: host,
+  path: "/open-apis/auth/v3/tenant_access_token/internal",
+  method: "POST",
+  headers: {
+    "Content-Type": "application/json; charset=utf-8",
+    "Content-Length": Buffer.byteLength(payload),
+  },
+  timeout: 15000,
+}, (res) => {
+  let body = "";
+  res.setEncoding("utf8");
+  res.on("data", chunk => body += chunk);
+  res.on("end", () => {
+    let data;
+    try {
+      data = JSON.parse(body);
+    } catch {
+      console.error(`invalid JSON response from ${host}: HTTP ${res.statusCode}`);
+      process.exit(1);
+    }
+    if (data.code === 0 && data.tenant_access_token) {
+      process.exit(0);
+    }
+    const msg = data.msg || data.message || `HTTP ${res.statusCode}`;
+    console.error(`credential validation failed: code=${data.code} msg=${msg}`);
+    process.exit(1);
+  });
+});
+
+req.on("timeout", () => {
+  req.destroy(new Error(`request timed out for ${host}`));
+});
+req.on("error", (err) => {
+  console.error(`credential validation request failed: ${err.message}`);
+  process.exit(1);
+});
+req.write(payload);
+req.end();
+NODE
+}
+
+config_value() {
+  key="$1"
+  [[ -f "$CONFIG_FILE" ]] || return 1
+  node - "$CONFIG_FILE" "$key" <<'NODE'
+const fs = require("fs");
+const [path, key] = process.argv.slice(2);
+let data;
+try {
+  data = JSON.parse(fs.readFileSync(path, "utf8"));
+} catch {
+  process.exit(1);
+}
+const value = data[key];
+if (typeof value !== "string" || !value.trim()) process.exit(1);
+console.log(value.trim());
+NODE
+}
+
+update_config_credentials() {
+  app_id="$1"
+  app_secret="$2"
+  APP_ID="$app_id" APP_SECRET="$app_secret" node - "$CONFIG_FILE" <<'NODE'
+const fs = require("fs");
+const path = process.argv[2];
+const data = JSON.parse(fs.readFileSync(path, "utf8"));
+data.lark_app_id = process.env.APP_ID;
+data.lark_app_secret = process.env.APP_SECRET;
+fs.writeFileSync(path, JSON.stringify(data, null, 2) + "\n", { mode: 0o600 });
+NODE
+}
+
+read_valid_lark_app_secret() {
+  app_id="$1"
+  brand="${2:-feishu}"
+  secret_url="$(lark_app_console_url "$app_id")"
+  log "open this URL to copy App Secret: $secret_url" >&2
+
+  while true; do
+    app_secret="${LARK_APP_SECRET:-$(read_secret 'lark_app_secret: ')}"
+    if validate_lark_app_credentials "$app_id" "$app_secret" "$brand"; then
+      log "lark app credentials validated" >&2
+      printf '%s' "$app_secret"
+      return
+    fi
+    if [[ -n "${LARK_APP_SECRET:-}" || ! -t 0 ]]; then
+      die "lark app credential validation failed"
+    fi
+    warn "App Secret validation failed; please copy the App Secret again"
+  done
+}
+
+ensure_existing_config_valid() {
+  app_id="$(config_value lark_app_id || true)"
+  app_secret="$(config_value lark_app_secret || true)"
+  if [[ -z "$app_id" || -z "$app_secret" ]]; then
+    warn "config exists but lark_app_id or lark_app_secret is missing"
+  else
+    brand="$(detect_lark_brand)"
+    if validate_lark_app_credentials "$app_id" "$app_secret" "$brand"; then
+      log "existing lark app credentials validated"
+      return
+    fi
+    warn "existing lark app credentials are invalid"
+  fi
+
+  if [[ ! -t 0 ]]; then
+    die "config exists but lark app credentials are invalid; set LARK_APP_SECRET or fix $CONFIG_FILE"
+  fi
+
+  if [[ -z "$app_id" ]]; then
+    app_id="$(detect_lark_app_id || true)"
+    if [[ -z "$app_id" ]]; then
+      app_id="$(read_required 'lark_app_id: ')"
+    fi
+  fi
+  brand="$(detect_lark_brand)"
+  app_secret="$(read_valid_lark_app_secret "$app_id" "$brand")"
+  update_config_credentials "$app_id" "$app_secret"
+  log "updated lark_app_id and lark_app_secret in $CONFIG_FILE"
 }
 
 resolve_owner_open_id() {
@@ -755,6 +902,7 @@ resolve_owner_open_id() {
 write_config_if_missing() {
   if [[ -f "$CONFIG_FILE" ]]; then
     log "config exists: $CONFIG_FILE"
+    ensure_existing_config_valid
     return
   fi
 
@@ -772,12 +920,8 @@ write_config_if_missing() {
   else
     lark_app_id="$(read_required 'lark_app_id: ')"
   fi
-  if [[ -z "${LARK_APP_SECRET:-}" ]]; then
-    lark_brand="$(detect_lark_brand)"
-    secret_url="$(lark_app_console_url "$lark_app_id" "$lark_brand")"
-    log "open this URL to copy App Secret: $secret_url"
-  fi
-  lark_app_secret="${LARK_APP_SECRET:-$(read_secret 'lark_app_secret: ')}"
+  lark_brand="$(detect_lark_brand)"
+  lark_app_secret="$(read_valid_lark_app_secret "$lark_app_id" "$lark_brand")"
   default_work_dir="${DEFAULT_WORK_DIR:-$HOME}"
 
   umask 077

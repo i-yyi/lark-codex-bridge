@@ -64,6 +64,7 @@
    - `lark_app_id` 默认通过 `lark-cli auth status` 或 `lark-cli config show` 自动获取
    - 可用环境变量 `OWNER_OPEN_ID` 显式覆盖
    - `lark_app_secret` 无法从 lark-cli 明文读取；脚本会打印开发者后台 App 基础信息页 URL，用户复制 App Secret 后交互输入，也可用 `LARK_APP_SECRET` 提供
+   - App Secret 写入前会调用飞书 token 接口验证；已有配置验证失败时会提示重新输入并覆盖错误值
 
 6. 编译安装
    - `go build -o $HOME/.local/bin/lark-bridge ./cmd/lark-bridge`
