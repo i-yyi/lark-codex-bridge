@@ -2,7 +2,17 @@
   "owner_open_id": "ou_xxx",
   "default_work_dir": ".",
   "state_path": "state.json",
-  "lark_cli": "lark-cli",
-  "lark_cli_no_proxy": false,
-  "codex_cli": "codex"
+  "lark_app_id": "cli_xxx",
+  "lark_app_secret": "use-env-or-local-secret",
+  "codex_cli": "codex",
+  "work_dirs": {
+    "Argus": "/home/yyi/Projects/Argus"
+  },
+  "default_task_model": "gpt-5.5",
+  "default_task_reasoning_effort": "xhigh",
+  "default_task_service_tier": "fast",
+  "default_chat_model": "gpt-5.5",
+  "default_chat_reasoning_effort": "medium",
+  "default_chat_service_tier": "fast",
+  "log_level": "info"
 }

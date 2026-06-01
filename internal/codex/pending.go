@@ -31,7 +31,7 @@ func (err *PendingRequestError) Error() string {
 	return "codex requested user interaction: " + err.Pending.Method
 }
 
-func (client *Client) RespondToPending(ctx context.Context, pending PendingRequest, decision string) (TurnResult, error) {
+func (client *Client) RespondToPending(ctx context.Context, pending PendingRequest, decision string, onUpdate TurnUpdateFunc) (TurnResult, error) {
 	client.mu.Lock()
 	defer client.mu.Unlock()
 
@@ -46,10 +46,10 @@ func (client *Client) RespondToPending(ctx context.Context, pending PendingReque
 		return TurnResult{}, err
 	}
 
-	return client.drainTurnLocked(ctx, pending.ThreadID, pending.TurnID)
+	return client.drainTurnLocked(ctx, pending.ThreadID, pending.TurnID, onUpdate)
 }
 
-func (client *Client) drainTurnLocked(ctx context.Context, threadID string, turnID string) (TurnResult, error) {
+func (client *Client) drainTurnLocked(ctx context.Context, threadID string, turnID string, onUpdate TurnUpdateFunc) (TurnResult, error) {
 	var deltas strings.Builder
 	var finalText string
 	for {
@@ -80,6 +80,9 @@ func (client *Client) drainTurnLocked(ctx context.Context, threadID string, turn
 			}
 			if params.ThreadID == threadID && params.TurnID == turnID {
 				deltas.WriteString(params.Delta)
+				if onUpdate != nil {
+					onUpdate(strings.TrimSpace(deltas.String()))
+				}
 			}
 		case "item/completed":
 			var params struct {
@@ -95,6 +98,9 @@ func (client *Client) drainTurnLocked(ctx context.Context, threadID string, turn
 			}
 			if params.ThreadID == threadID && params.TurnID == turnID && params.Item.Type == "agentMessage" {
 				finalText = params.Item.Text
+				if onUpdate != nil && deltas.Len() == 0 {
+					onUpdate(strings.TrimSpace(finalText))
+				}
 			}
 		case "turn/completed":
 			var params struct {

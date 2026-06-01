@@ -5,16 +5,19 @@ import "strings"
 type CommandName string
 
 const (
-	CommandNone    CommandName = ""
-	CommandUnknown CommandName = "unknown"
-	CommandHelp    CommandName = "help"
-	CommandStatus  CommandName = "status"
-	CommandCreate  CommandName = "create"
-	CommandReset   CommandName = "reset"
-	CommandStop    CommandName = "stop"
-	CommandApprove CommandName = "approve"
-	CommandDeny    CommandName = "deny"
-	CommandCancel  CommandName = "cancel"
+	CommandNone     CommandName = ""
+	CommandUnknown  CommandName = "unknown"
+	CommandHelp     CommandName = "help"
+	CommandStatus   CommandName = "status"
+	CommandSessions CommandName = "sessions"
+	CommandProjects CommandName = "projects"
+	CommandCreate   CommandName = "create"
+	CommandAttach   CommandName = "attach"
+	CommandReset    CommandName = "reset"
+	CommandStop     CommandName = "stop"
+	CommandApprove  CommandName = "approve"
+	CommandDeny     CommandName = "deny"
+	CommandCancel   CommandName = "cancel"
 )
 
 type Command struct {
@@ -44,8 +47,14 @@ func ParseCommand(text string) Command {
 		cmd.Name = CommandHelp
 	case "status":
 		cmd.Name = CommandStatus
+	case "sessions":
+		cmd.Name = CommandSessions
+	case "projects":
+		cmd.Name = CommandProjects
 	case "create":
 		cmd.Name = CommandCreate
+	case "attach":
+		cmd.Name = CommandAttach
 	case "reset":
 		cmd.Name = CommandReset
 	case "stop":

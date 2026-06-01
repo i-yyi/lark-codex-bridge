@@ -17,7 +17,10 @@ import (
 const defaultBin = "codex"
 
 type Client struct {
-	Bin string
+	Bin             string
+	Model           string
+	ReasoningEffort string
+	ServiceTier     string
 
 	mu       sync.Mutex
 	nextID   atomic.Int64
@@ -32,6 +35,8 @@ type TurnResult struct {
 	TurnID   string
 	Text     string
 }
+
+type TurnUpdateFunc func(text string)
 
 type RPCError struct {
 	Code    int64           `json:"code"`
@@ -49,12 +54,17 @@ func (err *RPCError) Error() string {
 	return fmt.Sprintf("codex rpc error %d: %s: %s", err.Code, err.Message, string(err.Data))
 }
 
-func NewClient(bin string) *Client {
+func NewClient(bin string, model string, reasoningEffort string, serviceTier string) *Client {
 	bin = strings.TrimSpace(bin)
 	if bin == "" {
 		bin = defaultBin
 	}
-	return &Client{Bin: bin}
+	return &Client{
+		Bin:             bin,
+		Model:           strings.TrimSpace(model),
+		ReasoningEffort: strings.ToLower(strings.TrimSpace(reasoningEffort)),
+		ServiceTier:     strings.ToLower(strings.TrimSpace(serviceTier)),
+	}
 }
 
 func (client *Client) Start(ctx context.Context) error {
@@ -65,7 +75,12 @@ func (client *Client) Start(ctx context.Context) error {
 		return nil
 	}
 
-	cmd := exec.Command(client.Bin, "app-server", "--listen", "stdio://")
+	args := []string{"app-server"}
+	args = appendConfigOverride(args, "model", client.Model)
+	args = appendConfigOverride(args, "model_reasoning_effort", client.ReasoningEffort)
+	args = appendConfigOverride(args, "service_tier", client.ServiceTier)
+	args = append(args, "--listen", "stdio://")
+	cmd := exec.Command(client.Bin, args...)
 	stdin, err := cmd.StdinPipe()
 	if err != nil {
 		return fmt.Errorf("open codex stdin: %w", err)
@@ -108,6 +123,14 @@ func (client *Client) Start(ctx context.Context) error {
 	}
 
 	return nil
+}
+
+func appendConfigOverride(args []string, key string, value string) []string {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return args
+	}
+	return append(args, "-c", fmt.Sprintf("%s=%q", key, value))
 }
 
 func (client *Client) Close() error {
@@ -182,7 +205,7 @@ func (client *Client) ResumeThread(ctx context.Context, threadID string, cwd str
 	return response.Thread.ID, nil
 }
 
-func (client *Client) RunTurn(ctx context.Context, threadID string, cwd string, text string) (TurnResult, error) {
+func (client *Client) RunTurn(ctx context.Context, threadID string, cwd string, text string, onUpdate TurnUpdateFunc) (TurnResult, error) {
 	threadID = strings.TrimSpace(threadID)
 	text = strings.TrimSpace(text)
 	if threadID == "" {
@@ -227,7 +250,7 @@ func (client *Client) RunTurn(ctx context.Context, threadID string, cwd string, 
 		return TurnResult{}, fmt.Errorf("turn/start response missing turn id")
 	}
 
-	return client.drainTurnLocked(ctx, threadID, turnID)
+	return client.drainTurnLocked(ctx, threadID, turnID, onUpdate)
 }
 
 func (client *Client) requestLocked(ctx context.Context, method string, params any) (json.RawMessage, error) {

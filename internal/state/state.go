@@ -14,8 +14,11 @@ type State struct {
 }
 
 type Session struct {
-	CodexThreadID string `json:"codex_thread_id"`
-	WorkDir       string `json:"work_dir"`
+	CodexThreadID   string `json:"codex_thread_id"`
+	WorkDir         string `json:"work_dir"`
+	Model           string `json:"model,omitempty"`
+	ReasoningEffort string `json:"reasoning_effort,omitempty"`
+	ServiceTier     string `json:"service_tier,omitempty"`
 }
 
 func New(defaultWorkDir string) State {
@@ -79,6 +82,15 @@ func (state *State) SetSessionWorkDir(key string, workDir string) {
 	key = cleanSessionKey(key)
 	session := state.EnsureSession(key, "")
 	session.WorkDir = cleanDefaultWorkDir(workDir)
+	state.Sessions[key] = session
+}
+
+func (state *State) SetSessionModelConfig(key string, model string, effort string, serviceTier string) {
+	key = cleanSessionKey(key)
+	session := state.EnsureSession(key, "")
+	session.Model = strings.TrimSpace(model)
+	session.ReasoningEffort = strings.ToLower(strings.TrimSpace(effort))
+	session.ServiceTier = strings.ToLower(strings.TrimSpace(serviceTier))
 	state.Sessions[key] = session
 }
 
