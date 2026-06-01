@@ -34,6 +34,7 @@
    - `$HOME/.local/go/bin`
    - `/usr/local/go/bin`
    - 如果存在 nvm，脚本会加载 `$NVM_DIR/nvm.sh` 或 `$HOME/.nvm/nvm.sh`
+   - 部署时会写入 `$HOME/.config/lark-bridge/shell.env`，并让 `.profile` / 当前 shell rc source 它
 
 2. 创建目录
    - config: `$XDG_CONFIG_HOME/lark-bridge` 或 `$HOME/.config/lark-bridge`
@@ -42,9 +43,9 @@
 
 3. 检查依赖
    - `node` / `npm` / `npx`：要求 Node.js >= 18；缺失或版本过低时通过 nvm 用户态安装 Node.js LTS
-   - `lark-cli`：缺失时用 npm 安装 `@larksuite/cli`
+   - `lark-cli`：缺失时用 `npm install --prefix $HOME/.local/npm_packages` 安装 `@larksuite/cli`
    - Lark skills：缺失时执行 `npx --yes skills add larksuite/cli -g -y`
-   - `codex`：缺失时用 npm 安装 `@openai/codex`
+   - `codex`：缺失时用 `npm install --prefix $HOME/.local/npm_packages` 安装 `@openai/codex`
    - Codex auth：没有 `OPENAI_API_KEY` 且没有 `$CODEX_HOME/auth.json` 时运行 `codex login`
    - `go`：缺失时安装 Go 到 `$HOME/.local/go`
 
@@ -72,6 +73,7 @@
    - 写入 `$HOME/.config/lark-bridge/env`
    - 固化 PATH，包括当前使用的 Node.js bin 目录
    - 继承当前 shell 中的 `HTTP_PROXY`、`HTTPS_PROXY`、`ALL_PROXY`、`NO_PROXY`、`CODEX_HOME`
+   - 不写入持久 npm prefix，避免和 nvm 冲突
 
 8. systemd user service
    - 要求 `systemctl --user` 可用
