@@ -595,9 +595,36 @@ resolve_owner_open_id() {
   fi
 
   if [[ -t 0 ]]; then
-    warn "failed to detect owner_open_id from lark-cli"
-    read_required "owner_open_id: "
-    return
+    warn "failed to detect owner_open_id because lark user identity is missing"
+    printf '[%s] Choose how to resolve owner_open_id:\n' "$APP_NAME" >&2
+    printf '  1) run lark-cli auth login, then auto-detect (recommended)\n' >&2
+    printf '  2) enter owner_open_id manually\n' >&2
+    printf '  3) abort\n' >&2
+    read -r -p "Select [1]: " owner_choice
+    case "${owner_choice:-1}" in
+      1 | login)
+        lark-cli auth login
+        owner_open_id="$(detect_owner_open_id || true)"
+        if [[ -n "$owner_open_id" ]]; then
+          log "owner_open_id detected after lark user login" >&2
+          printf '%s' "$owner_open_id"
+          return
+        fi
+        warn "still failed to detect owner_open_id after lark user login" >&2
+        read_required "owner_open_id: "
+        return
+        ;;
+      2 | manual)
+        read_required "owner_open_id: "
+        return
+        ;;
+      3 | abort)
+        die "owner_open_id is required"
+        ;;
+      *)
+        die "unknown owner_open_id choice: $owner_choice"
+        ;;
+    esac
   fi
 
   die "failed to get owner_open_id from lark-cli. Run lark-cli auth login for the user identity, or set OWNER_OPEN_ID and rerun."
