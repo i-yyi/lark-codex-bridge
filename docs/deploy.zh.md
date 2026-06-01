@@ -59,9 +59,11 @@
    - 默认路径：`$HOME/.config/lark-bridge/config.json`
    - 默认不会复制仓库根目录的 `config.json`
    - 只有传 `--use-local-config` 时，才复制仓库根目录的 `config.json` 并设为 `0600`
-   - `owner_open_id` 默认通过 `lark-cli auth status` 或 `lark-cli contact +get-user --as user` 自动获取；如果 user identity 缺失，会提示执行 `lark-cli auth login` 后重试
+   - user 授权默认执行 `lark-cli auth login --domain contact,im,docs,drive,base,sheets,wiki`；可用 `LARK_AUTH_DOMAINS` 覆盖
+   - `owner_open_id` 默认通过 `lark-cli auth status` 或 `lark-cli contact +get-user --as user` 自动获取；如果 user identity 缺失，会提示执行 user 授权后重试
+   - `lark_app_id` 默认通过 `lark-cli auth status` 或 `lark-cli config show` 自动获取
    - 可用环境变量 `OWNER_OPEN_ID` 显式覆盖
-   - 否则交互输入 `lark_app_id`、`lark_app_secret`
+   - `lark_app_secret` 无法从 lark-cli 明文读取，需要交互输入或用 `LARK_APP_SECRET` 提供
 
 6. 编译安装
    - `go build -o $HOME/.local/bin/lark-bridge ./cmd/lark-bridge`

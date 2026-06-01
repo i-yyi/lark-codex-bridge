@@ -14,6 +14,7 @@ LARK_SKILLS_AGENT="${LARK_SKILLS_AGENT:-codex}"
 LARK_SKILLS_CHECK="${LARK_SKILLS_CHECK:-lark-shared}"
 CODEX_LOGIN_MODE="${CODEX_LOGIN_MODE:-device}"
 LARK_CONFIG_INIT_TIMEOUT="${LARK_CONFIG_INIT_TIMEOUT:-600}"
+LARK_AUTH_DOMAINS="${LARK_AUTH_DOMAINS:-contact,im,docs,drive,base,sheets,wiki}"
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 CONFIG_HOME="${XDG_CONFIG_HOME:-$HOME/.config}"
@@ -586,6 +587,63 @@ console.log(openId);
 ' <<<"$raw" 2>/dev/null
 }
 
+extract_app_id() {
+  raw="$1"
+  [[ -n "$raw" ]] || return 1
+  node -e '
+const fs = require("fs");
+let data;
+try {
+  data = JSON.parse(fs.readFileSync(0, "utf8"));
+} catch {
+  process.exit(1);
+}
+function findAppId(value) {
+  if (!value || typeof value !== "object") return "";
+  if (typeof value.appId === "string" && value.appId.trim()) return value.appId.trim();
+  if (typeof value.app_id === "string" && value.app_id.trim()) return value.app_id.trim();
+  if (Array.isArray(value)) {
+    for (const item of value) {
+      const found = findAppId(item);
+      if (found) return found;
+    }
+    return "";
+  }
+  for (const item of Object.values(value)) {
+    const found = findAppId(item);
+    if (found) return found;
+  }
+  return "";
+}
+const appId = findAppId(data);
+if (!appId) process.exit(1);
+console.log(appId);
+' <<<"$raw" 2>/dev/null
+}
+
+detect_lark_app_id() {
+  if [[ -n "${LARK_APP_ID:-}" ]]; then
+    printf '%s' "$LARK_APP_ID"
+    return
+  fi
+
+  raw="$(lark-cli auth status 2>/dev/null || true)"
+  app_id="$(extract_app_id "$raw" || true)"
+  if [[ -n "$app_id" ]]; then
+    printf '%s' "$app_id"
+    return
+  fi
+
+  raw="$(lark-cli config show 2>/dev/null || true)"
+  app_id="$(extract_app_id "$raw" || true)"
+  if [[ -n "$app_id" ]]; then
+    printf '%s' "$app_id"
+    return
+  fi
+
+  return 1
+}
+
 resolve_owner_open_id() {
   owner_open_id="$(detect_owner_open_id || true)"
   if [[ -n "$owner_open_id" ]]; then
@@ -597,13 +655,13 @@ resolve_owner_open_id() {
   if [[ -t 0 ]]; then
     warn "failed to detect owner_open_id because lark user identity is missing"
     printf '[%s] Choose how to resolve owner_open_id:\n' "$APP_NAME" >&2
-    printf '  1) run lark-cli auth login, then auto-detect (recommended)\n' >&2
+    printf '  1) run lark-cli auth login --domain %s, then auto-detect (recommended)\n' "$LARK_AUTH_DOMAINS" >&2
     printf '  2) enter owner_open_id manually\n' >&2
     printf '  3) abort\n' >&2
     read -r -p "Select [1]: " owner_choice
     case "${owner_choice:-1}" in
       1 | login)
-        lark-cli auth login
+        lark-cli auth login --domain "$LARK_AUTH_DOMAINS"
         owner_open_id="$(detect_owner_open_id || true)"
         if [[ -n "$owner_open_id" ]]; then
           log "owner_open_id detected after lark user login" >&2
@@ -644,7 +702,12 @@ write_config_if_missing() {
 
   log "creating $CONFIG_FILE"
   owner_open_id="$(resolve_owner_open_id)"
-  lark_app_id="${LARK_APP_ID:-$(read_required 'lark_app_id: ')}"
+  lark_app_id="$(detect_lark_app_id || true)"
+  if [[ -n "$lark_app_id" ]]; then
+    log "lark_app_id detected from lark-cli"
+  else
+    lark_app_id="$(read_required 'lark_app_id: ')"
+  fi
   lark_app_secret="${LARK_APP_SECRET:-$(read_secret 'lark_app_secret: ')}"
   default_work_dir="${DEFAULT_WORK_DIR:-$HOME}"
 
