@@ -1045,7 +1045,34 @@ ensure_systemd_user() {
     system_user="${USER:-$(id -un)}"
     linger="$(loginctl show-user "$system_user" -p Linger --value 2>/dev/null || true)"
     if [[ "$linger" != "yes" ]]; then
-      die "systemd linger is disabled for $system_user. Run: loginctl enable-linger $system_user"
+      warn "systemd linger is disabled for $system_user; the daemon may stop after logout"
+      if [[ "$CHECK_ONLY" == true ]]; then
+        die "systemd linger is disabled for $system_user. Normal deploy can enable it, or run: loginctl enable-linger $system_user"
+      fi
+      if [[ ! -t 0 ]]; then
+        die "systemd linger is disabled for $system_user. Run: loginctl enable-linger $system_user"
+      fi
+
+      read -r -p "Enable systemd linger for $system_user now? [Y/n]: " enable_linger
+      case "${enable_linger:-Y}" in
+        Y | y | yes | YES)
+          if loginctl enable-linger "$system_user" >/dev/null 2>&1; then
+            :
+          elif has_cmd sudo && sudo loginctl enable-linger "$system_user"; then
+            :
+          else
+            die "failed to enable systemd linger. Run manually: sudo loginctl enable-linger $system_user"
+          fi
+          ;;
+        *)
+          die "systemd linger is required for a reliable background service. Run: loginctl enable-linger $system_user"
+          ;;
+      esac
+
+      linger="$(loginctl show-user "$system_user" -p Linger --value 2>/dev/null || true)"
+      if [[ "$linger" != "yes" ]]; then
+        die "systemd linger still disabled for $system_user. Run manually: sudo loginctl enable-linger $system_user"
+      fi
     fi
     log "systemd linger enabled for $system_user"
   else

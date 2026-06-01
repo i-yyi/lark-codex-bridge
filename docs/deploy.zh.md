@@ -83,7 +83,7 @@
 
 8. systemd user service
    - 要求 `systemctl --user` 可用
-   - 要求当前用户已启用 linger；未启用时先运行 `loginctl enable-linger $USER`
+   - 要求当前用户已启用 linger；未启用时脚本会提示自动执行 `loginctl enable-linger $USER`，必要时会调用 `sudo`
    - 写入 `$HOME/.config/systemd/user/lark-bridge.service`
    - 写入 `$HOME/.config/systemd/user/lark-bridge-health.service`
    - 写入 `$HOME/.config/systemd/user/lark-bridge-health.timer`
