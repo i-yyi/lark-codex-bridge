@@ -1,11 +1,17 @@
 #!/usr/bin/env bash
-set -euo pipefail
+set -Eeuo pipefail
 
 APP_NAME="lark-bridge"
 GO_VERSION="${GO_VERSION:-1.22.12}"
 MIN_NODE_MAJOR="${MIN_NODE_MAJOR:-18}"
 NODE_VERSION="${NODE_VERSION:-lts/*}"
 NVM_VERSION="${NVM_VERSION:-v0.40.3}"
+HEARTBEAT_SECONDS="${HEARTBEAT_SECONDS:-15}"
+DOWNLOAD_CONNECT_TIMEOUT="${DOWNLOAD_CONNECT_TIMEOUT:-15}"
+DOWNLOAD_MAX_TIME="${DOWNLOAD_MAX_TIME:-300}"
+LARK_SKILLS_PACKAGE="${LARK_SKILLS_PACKAGE:-larksuite/cli}"
+LARK_SKILLS_AGENT="${LARK_SKILLS_AGENT:-codex}"
+LARK_SKILLS_CHECK="${LARK_SKILLS_CHECK:-lark-shared}"
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 CONFIG_HOME="${XDG_CONFIG_HOME:-$HOME/.config}"
@@ -72,8 +78,46 @@ die() {
   exit 1
 }
 
+on_error() {
+  status="$1"
+  line="$2"
+  command="$3"
+  printf '[%s] ERROR: command failed at line %s with exit %s: %s\n' "$APP_NAME" "$line" "$status" "$command" >&2
+}
+
+trap 'on_error "$?" "$LINENO" "$BASH_COMMAND"' ERR
+
 has_cmd() {
   command -v "$1" >/dev/null 2>&1
+}
+
+now_seconds() {
+  date +%s
+}
+
+run_with_heartbeat() {
+  label="$1"
+  shift
+  start="$(now_seconds)"
+  log "$label"
+  "$@" &
+  pid="$!"
+  while kill -0 "$pid" >/dev/null 2>&1; do
+    sleep "$HEARTBEAT_SECONDS"
+    if kill -0 "$pid" >/dev/null 2>&1; then
+      elapsed="$(( $(now_seconds) - start ))"
+      log "$label still running (${elapsed}s)"
+    fi
+  done
+  set +e
+  wait "$pid"
+  status="$?"
+  set -e
+  elapsed="$(( $(now_seconds) - start ))"
+  if [[ "$status" -ne 0 ]]; then
+    die "$label failed after ${elapsed}s"
+  fi
+  log "$label done (${elapsed}s)"
 }
 
 prepend_path() {
@@ -84,6 +128,7 @@ prepend_path() {
 }
 
 bootstrap_path() {
+  log "bootstrapping PATH"
   prepend_path "$INSTALL_DIR"
   prepend_path "$NPM_PREFIX/bin"
   prepend_path "$LOCAL_GO_DIR/bin"
@@ -142,6 +187,7 @@ node_major_version() {
 }
 
 ensure_dirs() {
+  log "ensuring install directories"
   mkdir -p "$CONFIG_DIR" "$STATE_DIR" "$INSTALL_DIR"
 }
 
@@ -157,9 +203,9 @@ install_nvm() {
   log "nvm not found, installing nvm $NVM_VERSION into $nvm_dir"
   mkdir -p "$nvm_dir"
   if has_cmd curl; then
-    curl -fsSL "$nvm_url" | PROFILE=/dev/null NVM_DIR="$nvm_dir" bash
+    curl -fL --connect-timeout "$DOWNLOAD_CONNECT_TIMEOUT" --max-time "$DOWNLOAD_MAX_TIME" "$nvm_url" | PROFILE=/dev/null NVM_DIR="$nvm_dir" bash
   elif has_cmd wget; then
-    wget -qO- "$nvm_url" | PROFILE=/dev/null NVM_DIR="$nvm_dir" bash
+    wget --timeout="$DOWNLOAD_CONNECT_TIMEOUT" --tries=3 -O- "$nvm_url" | PROFILE=/dev/null NVM_DIR="$nvm_dir" bash
   else
     die "curl or wget is required to install nvm"
   fi
@@ -185,6 +231,7 @@ validate_npm() {
 }
 
 ensure_node_runtime() {
+  log "checking Node.js runtime"
   load_nvm
 
   if has_cmd node && has_cmd npm && has_cmd npx; then
@@ -198,8 +245,7 @@ ensure_node_runtime() {
   load_nvm
   has_cmd nvm || die "nvm was installed but is not available in the current shell"
 
-  log "installing Node.js $NODE_VERSION with nvm"
-  nvm install "$NODE_VERSION"
+  run_with_heartbeat "installing Node.js $NODE_VERSION with nvm" nvm install "$NODE_VERSION"
   installed_node="$(nvm version "$NODE_VERSION")"
   if [[ "$installed_node" == "N/A" ]]; then
     installed_node="$NODE_VERSION"
@@ -209,6 +255,7 @@ ensure_node_runtime() {
 }
 
 check_npm() {
+  log "checking npm runtime"
   load_nvm
   validate_npm \
     "node not found; normal deploy can install Node.js with nvm" \
@@ -284,8 +331,7 @@ npm_install_global() {
   command_name="$2"
   mkdir -p "$NPM_PREFIX"
   prepend_path "$NPM_PREFIX/bin"
-  log "installing $package into $NPM_PREFIX"
-  npm install -g --prefix "$NPM_PREFIX" "$package" --no-audit --no-fund --progress=false
+  run_with_heartbeat "installing $package into $NPM_PREFIX" npm install -g --prefix "$NPM_PREFIX" "$package" --no-audit --no-fund --progress=false
   prepend_path "$NPM_PREFIX/bin"
   has_cmd "$command_name" || die "$command_name installation completed but command is still not in PATH"
 }
@@ -300,16 +346,26 @@ ensure_lark_cli() {
   npm_install_global "@larksuite/cli" "lark-cli"
 }
 
+skill_installed() {
+  skill_name="$1"
+  codex_home="${CODEX_HOME:-$HOME/.codex}"
+  for skills_dir in "$HOME/.agents/skills" "$codex_home/skills"; do
+    if [[ -f "$skills_dir/$skill_name/SKILL.md" ]]; then
+      return 0
+    fi
+  done
+  return 1
+}
+
 ensure_lark_skills() {
-  if [[ -f "$HOME/.agents/skills/lark-shared/SKILL.md" && -f "$HOME/.agents/skills/lark-im/SKILL.md" ]]; then
-    log "lark skills found"
+  if skill_installed "$LARK_SKILLS_CHECK"; then
+    log "lark skills found: $LARK_SKILLS_CHECK"
     return
   fi
 
-  log "lark skills not found, installing larksuite/cli skills"
-  if ! npx --yes skills add larksuite/cli -g -y; then
-    warn "failed to install lark skills; runtime daemon can still run, but agent-side help will be weaker"
-  fi
+  run_with_heartbeat "installing lark skills package $LARK_SKILLS_PACKAGE for agent $LARK_SKILLS_AGENT" \
+    npx --yes skills add "$LARK_SKILLS_PACKAGE" -g -y -a "$LARK_SKILLS_AGENT"
+  skill_installed "$LARK_SKILLS_CHECK" || die "lark skills installation completed but $LARK_SKILLS_CHECK was not found"
 }
 
 ensure_codex() {
@@ -672,11 +728,11 @@ check_codex_auth() {
 }
 
 check_lark_skills() {
-  if [[ -f "$HOME/.agents/skills/lark-shared/SKILL.md" && -f "$HOME/.agents/skills/lark-im/SKILL.md" ]]; then
-    log "lark skills found"
+  if skill_installed "$LARK_SKILLS_CHECK"; then
+    log "lark skills found: $LARK_SKILLS_CHECK"
     return
   fi
-  die "lark skills missing; normal deploy can install them with npx --yes skills add larksuite/cli -g -y"
+  die "lark skills missing; normal deploy can install them with: npx --yes skills add $LARK_SKILLS_PACKAGE -g -y -a $LARK_SKILLS_AGENT"
 }
 
 check_lark_config() {

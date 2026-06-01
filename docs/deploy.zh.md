@@ -44,7 +44,7 @@
 3. 检查依赖
    - `node` / `npm` / `npx`：要求 Node.js >= 18；缺失或版本过低时通过 nvm 用户态安装 Node.js LTS
    - `lark-cli`：缺失时用 `npm install --prefix $HOME/.local/npm_packages` 安装 `@larksuite/cli`
-   - Lark skills：缺失时执行 `npx --yes skills add larksuite/cli -g -y`
+   - Lark skills：缺失时执行 `npx --yes skills add larksuite/cli -g -y -a codex`，只安装 Codex agent 版本
    - `codex`：缺失时用 `npm install --prefix $HOME/.local/npm_packages` 安装 `@openai/codex`
    - Codex auth：没有 `OPENAI_API_KEY` 且没有 `$CODEX_HOME/auth.json` 时运行 `codex login`
    - `go`：缺失时安装 Go 到 `$HOME/.local/go`
