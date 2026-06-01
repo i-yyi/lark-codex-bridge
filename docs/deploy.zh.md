@@ -56,7 +56,9 @@
    - 默认路径：`$HOME/.config/lark-bridge/config.json`
    - 默认不会复制仓库根目录的 `config.json`
    - 只有传 `--use-local-config` 时，才复制仓库根目录的 `config.json` 并设为 `0600`
-   - 否则交互输入 `owner_open_id`、`lark_app_id`、`lark_app_secret`
+   - `owner_open_id` 默认通过 `lark-cli contact +get-user --as user` 自动获取
+   - 可用环境变量 `OWNER_OPEN_ID` 显式覆盖
+   - 否则交互输入 `lark_app_id`、`lark_app_secret`
 
 6. 编译安装
    - `go build -o $HOME/.local/bin/lark-bridge ./cmd/lark-bridge`

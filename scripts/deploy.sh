@@ -137,7 +137,7 @@ ensure_lark_skills() {
   fi
 
   log "lark skills not found, installing larksuite/cli skills"
-  if ! npx skills add larksuite/cli -g -y; then
+  if ! npx --yes skills add larksuite/cli -g -y; then
     warn "failed to install lark skills; runtime daemon can still run, but agent-side help will be weaker"
   fi
 }
@@ -253,6 +253,52 @@ read_required() {
   printf '%s' "$value"
 }
 
+detect_owner_open_id() {
+  if [[ -n "${OWNER_OPEN_ID:-}" ]]; then
+    printf '%s' "$OWNER_OPEN_ID"
+    return
+  fi
+
+  raw="$(lark-cli contact +get-user --as user --format json 2>/dev/null || true)"
+  if [[ -z "$raw" ]]; then
+    return 1
+  fi
+
+  open_id="$(node -e '
+const fs = require("fs");
+let data;
+try {
+  data = JSON.parse(fs.readFileSync(0, "utf8"));
+} catch {
+  process.exit(1);
+}
+function findOpenId(value) {
+  if (!value || typeof value !== "object") return "";
+  if (typeof value.open_id === "string" && value.open_id.trim()) return value.open_id.trim();
+  if (Array.isArray(value)) {
+    for (const item of value) {
+      const found = findOpenId(item);
+      if (found) return found;
+    }
+    return "";
+  }
+  for (const item of Object.values(value)) {
+    const found = findOpenId(item);
+    if (found) return found;
+  }
+  return "";
+}
+const openId = findOpenId(data);
+if (!openId) process.exit(1);
+console.log(openId);
+' <<<"$raw" 2>/dev/null || true)"
+
+  if [[ -z "$open_id" ]]; then
+    return 1
+  fi
+  printf '%s' "$open_id"
+}
+
 write_config_if_missing() {
   if [[ -f "$CONFIG_FILE" ]]; then
     log "config exists: $CONFIG_FILE"
@@ -266,7 +312,8 @@ write_config_if_missing() {
   fi
 
   log "creating $CONFIG_FILE"
-  owner_open_id="${OWNER_OPEN_ID:-$(read_required 'owner_open_id: ')}"
+  owner_open_id="$(detect_owner_open_id)" || die "failed to get owner_open_id from lark-cli. Run lark-cli auth login for the user identity, or set OWNER_OPEN_ID and rerun."
+  log "owner_open_id detected from lark-cli"
   lark_app_id="${LARK_APP_ID:-$(read_required 'lark_app_id: ')}"
   lark_app_secret="${LARK_APP_SECRET:-$(read_secret 'lark_app_secret: ')}"
   default_work_dir="${DEFAULT_WORK_DIR:-$HOME}"
