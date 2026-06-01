@@ -994,6 +994,7 @@ const config = {
   default_chat_model: 'gpt-5.5',
   default_chat_reasoning_effort: 'medium',
   default_chat_service_tier: 'fast',
+  chat_initial_prompt: '',
   log_level: 'info'
 };
 fs.writeFileSync(path, JSON.stringify(config, null, 2) + '\n', { mode: 0o600 });

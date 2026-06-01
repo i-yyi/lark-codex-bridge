@@ -84,10 +84,13 @@ func (app *daemon) runPromptTask(ctx context.Context, route messageRoute, messag
 	app.attachClient(route.sessionKey, client)
 
 	threadStart := time.Now()
-	activeThreadID, err := app.ensureCodexThread(ctx, route.sessionKey, client, threadID, workDir)
+	activeThreadID, createdThread, err := app.ensureCodexThread(ctx, route.sessionKey, client, threadID, workDir)
 	if err != nil {
 		app.finishTaskError(context.Background(), route, messageID, client, "Codex 创建 session 失败", err, statusMessageID)
 		return
+	}
+	if createdThread && route.kind == kindChat {
+		text = app.chatPromptWithInitialContext(text)
 	}
 
 	app.debug("codex.thread.ready", "msg", messageID, "key", route.sessionKey, "thread", activeThreadID, "dur", elapsed(threadStart))
@@ -96,7 +99,7 @@ func (app *daemon) runPromptTask(ctx context.Context, route messageRoute, messag
 		_ = app.replyOrPatchCard(context.Background(), messageID, statusMessageID, route, card)
 	}
 	turnStart := time.Now()
-	app.debug("codex.turn.start", "msg", messageID, "key", route.sessionKey, "thread", activeThreadID, "text_len", len(text))
+	app.debug("codex.turn.start", "msg", messageID, "key", route.sessionKey, "thread", activeThreadID, "created_thread", createdThread, "text_len", len(text))
 	onUpdate, stopUpdates := app.liveCardUpdater(ctx, route, messageID, statusMessageID, workDir)
 	onStarted := func(turnID string) {
 		backlog := app.markActiveTurn(route.sessionKey, client, activeThreadID, turnID)
@@ -237,7 +240,7 @@ func (app *daemon) runSteerBacklog(ctx context.Context, route messageRoute, clie
 	}
 }
 
-func (app *daemon) ensureCodexThread(ctx context.Context, sessionKey string, client *codex.Client, threadID string, workDir string) (string, error) {
+func (app *daemon) ensureCodexThread(ctx context.Context, sessionKey string, client *codex.Client, threadID string, workDir string) (string, bool, error) {
 	threadID = strings.TrimSpace(threadID)
 	if threadID != "" {
 		resumeStart := time.Now()
@@ -249,7 +252,7 @@ func (app *daemon) ensureCodexThread(ctx context.Context, sessionKey string, cli
 		} else {
 			app.setRuntimeThread(sessionKey, resumedThreadID)
 			app.debug("codex.resume.ok", "key", sessionKey, "thread", resumedThreadID, "dur", elapsed(resumeStart))
-			return resumedThreadID, nil
+			return resumedThreadID, false, nil
 		}
 	}
 
@@ -258,11 +261,19 @@ func (app *daemon) ensureCodexThread(ctx context.Context, sessionKey string, cli
 	newThreadID, err := client.StartThread(ctx, workDir, false)
 	if err != nil {
 		app.logError("codex.thread.fail", "key", sessionKey, "workdir", workDir, "dur", elapsed(createStart), "err", err)
-		return "", err
+		return "", false, err
 	}
 	if err := app.saveSessionThread(sessionKey, newThreadID); err != nil {
-		return "", err
+		return "", false, err
 	}
 	app.debug("codex.thread.ok", "key", sessionKey, "thread", newThreadID, "dur", elapsed(createStart))
-	return newThreadID, nil
+	return newThreadID, true, nil
+}
+
+func (app *daemon) chatPromptWithInitialContext(text string) string {
+	initialPrompt := strings.TrimSpace(app.cfg.ChatInitialPrompt)
+	if initialPrompt == "" {
+		return text
+	}
+	return initialPrompt + "\n\n---\n\n用户消息：\n" + strings.TrimSpace(text)
 }

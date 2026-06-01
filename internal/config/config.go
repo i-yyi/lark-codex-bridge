@@ -21,6 +21,7 @@ type Config struct {
 	DefaultChatModel       string            `json:"default_chat_model"`
 	DefaultChatEffort      string            `json:"default_chat_reasoning_effort"`
 	DefaultChatServiceTier string            `json:"default_chat_service_tier"`
+	ChatInitialPrompt      string            `json:"chat_initial_prompt"`
 	LogLevel               string            `json:"log_level"`
 }
 
@@ -47,6 +48,7 @@ func LoadConfig(path string) (Config, error) {
 	cfg.DefaultChatModel = firstString(cfg.DefaultChatModel, os.Getenv("LARK_BRIDGE_DEFAULT_CHAT_MODEL"))
 	cfg.DefaultChatEffort = strings.ToLower(firstString(cfg.DefaultChatEffort, os.Getenv("LARK_BRIDGE_DEFAULT_CHAT_REASONING_EFFORT")))
 	cfg.DefaultChatServiceTier = strings.ToLower(firstString(cfg.DefaultChatServiceTier, os.Getenv("LARK_BRIDGE_DEFAULT_CHAT_SERVICE_TIER")))
+	cfg.ChatInitialPrompt = strings.TrimSpace(firstString(cfg.ChatInitialPrompt, os.Getenv("LARK_BRIDGE_CHAT_INITIAL_PROMPT")))
 	cfg.LogLevel = strings.ToLower(firstString(cfg.LogLevel, os.Getenv("LARK_BRIDGE_LOG_LEVEL")))
 	workDirs, err := cleanWorkDirs(cfg.WorkDirs)
 	if err != nil {

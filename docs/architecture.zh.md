@@ -122,8 +122,10 @@ callback handler 会校验 operator open_id 必须等于配置里的 owner。
   "default_chat_model": "gpt-5.5",
   "default_chat_reasoning_effort": "medium",
   "default_chat_service_tier": "fast",
+  "chat_initial_prompt": "",
   "log_level": "info"
 }
 ```
 
 `lark_app_id` / `lark_app_secret` 也可通过 `LARK_APP_ID` / `LARK_APP_SECRET` 提供。
+`chat_initial_prompt` 只会注入私聊 chat session 新建 Codex thread 的第一条消息，默认空；也可通过 `LARK_BRIDGE_CHAT_INITIAL_PROMPT` 覆盖。

@@ -43,7 +43,7 @@ func run(ctx context.Context, configPath string, logger *log.Logger) error {
 	defer app.shutdown()
 
 	app.logStateSummary()
-	app.log("daemon.online", "owner", cfg.OwnerOpenID, "sessions", len(store.Sessions), "projects", len(cfg.WorkDirs), "state", cfg.StatePath, "workdir", cfg.DefaultWorkDir, "task_model", cfg.DefaultTaskModel, "task_effort", cfg.DefaultTaskEffort, "task_tier", cfg.DefaultTaskServiceTier, "chat_model", cfg.DefaultChatModel, "chat_effort", cfg.DefaultChatEffort, "chat_tier", cfg.DefaultChatServiceTier, "lark_app", cfg.LarkAppID, "codex_cli", cfg.CodexCLI, "log_level", cfg.LogLevel)
+	app.log("daemon.online", "owner", cfg.OwnerOpenID, "sessions", len(store.Sessions), "projects", len(cfg.WorkDirs), "state", cfg.StatePath, "workdir", cfg.DefaultWorkDir, "task_model", cfg.DefaultTaskModel, "task_effort", cfg.DefaultTaskEffort, "task_tier", cfg.DefaultTaskServiceTier, "chat_model", cfg.DefaultChatModel, "chat_effort", cfg.DefaultChatEffort, "chat_tier", cfg.DefaultChatServiceTier, "chat_initial_prompt_len", len(cfg.ChatInitialPrompt), "lark_app", cfg.LarkAppID, "codex_cli", cfg.CodexCLI, "log_level", cfg.LogLevel)
 	botName := "lark-bridge"
 	if name, err := app.lark.BotName(ctx); err != nil {
 		app.logError("lark.bot_name.failed", "err", err)

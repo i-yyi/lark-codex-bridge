@@ -79,7 +79,7 @@ func runConfigCheck(configPath string, logger *log.Logger) error {
 	if _, err := exec.LookPath(cfg.CodexCLI); err != nil {
 		return fmt.Errorf("codex_cli %q not found in PATH", cfg.CodexCLI)
 	}
-	logger.Printf("%-20s %s", "config.ok", formatLogFields("path", configPath, "workdirs", len(cfg.WorkDirs), "codex_cli", cfg.CodexCLI, "task_model", cfg.DefaultTaskModel, "chat_model", cfg.DefaultChatModel))
+	logger.Printf("%-20s %s", "config.ok", formatLogFields("path", configPath, "workdirs", len(cfg.WorkDirs), "codex_cli", cfg.CodexCLI, "task_model", cfg.DefaultTaskModel, "chat_model", cfg.DefaultChatModel, "chat_initial_prompt_len", len(cfg.ChatInitialPrompt)))
 	return nil
 }
 
