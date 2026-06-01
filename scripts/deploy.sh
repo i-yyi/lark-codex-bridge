@@ -517,6 +517,7 @@ read_secret() {
   while [[ -z "$value" ]]; do
     read -r -s -p "$prompt" value
     printf '\n'
+    value="$(trim_space "$value")"
   done
   printf '%s' "$value"
 }
@@ -701,14 +702,14 @@ lark_app_console_url() {
   printf 'https://open.larkoffice.com/app/%s/baseinfo' "$app_id"
 }
 
-lark_api_host() {
+lark_api_hosts() {
   brand="${1:-feishu}"
   case "$brand" in
     lark)
-      printf 'open.larksuite.com'
+      printf 'open.larksuite.com open.larkoffice.com open.feishu.cn'
       ;;
     *)
-      printf 'open.feishu.cn'
+      printf 'open.larkoffice.com open.feishu.cn open.larksuite.com'
       ;;
   esac
 }
@@ -723,54 +724,71 @@ validate_lark_app_credentials() {
     return 0
   fi
 
-  api_host="$(lark_api_host "$brand")"
-  APP_ID="$app_id" APP_SECRET="$app_secret" API_HOST="$api_host" node <<'NODE'
+  api_hosts="$(lark_api_hosts "$brand")"
+  APP_ID="$app_id" APP_SECRET="$app_secret" API_HOSTS="$api_hosts" node <<'NODE'
 const https = require("https");
 
 const appID = process.env.APP_ID;
 const appSecret = process.env.APP_SECRET;
-const host = process.env.API_HOST;
+const hosts = (process.env.API_HOSTS || "").split(/\s+/).filter(Boolean);
 const payload = JSON.stringify({ app_id: appID, app_secret: appSecret });
 
-const req = https.request({
-  hostname: host,
-  path: "/open-apis/auth/v3/tenant_access_token/internal",
-  method: "POST",
-  headers: {
-    "Content-Type": "application/json; charset=utf-8",
-    "Content-Length": Buffer.byteLength(payload),
-  },
-  timeout: 15000,
-}, (res) => {
-  let body = "";
-  res.setEncoding("utf8");
-  res.on("data", chunk => body += chunk);
-  res.on("end", () => {
-    let data;
-    try {
-      data = JSON.parse(body);
-    } catch {
-      console.error(`invalid JSON response from ${host}: HTTP ${res.statusCode}`);
-      process.exit(1);
-    }
-    if (data.code === 0 && data.tenant_access_token) {
+function requestToken(host) {
+  return new Promise((resolve) => {
+    const req = https.request({
+      hostname: host,
+      path: "/open-apis/auth/v3/tenant_access_token/internal",
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json; charset=utf-8",
+        "Content-Length": Buffer.byteLength(payload),
+      },
+      timeout: 15000,
+    }, (res) => {
+      let body = "";
+      res.setEncoding("utf8");
+      res.on("data", chunk => body += chunk);
+      res.on("end", () => {
+        let data;
+        try {
+          data = JSON.parse(body);
+        } catch {
+          resolve({ ok: false, host, detail: `invalid JSON response: HTTP ${res.statusCode}` });
+          return;
+        }
+        if (data.code === 0 && data.tenant_access_token) {
+          resolve({ ok: true, host });
+          return;
+        }
+        const msg = data.msg || data.message || `HTTP ${res.statusCode}`;
+        resolve({ ok: false, host, detail: `code=${data.code} msg=${msg}` });
+      });
+    });
+
+    req.on("timeout", () => {
+      req.destroy(new Error(`request timed out`));
+    });
+    req.on("error", (err) => {
+      resolve({ ok: false, host, detail: err.message });
+    });
+    req.write(payload);
+    req.end();
+  });
+}
+
+(async () => {
+  const failures = [];
+  for (const host of hosts) {
+    const result = await requestToken(host);
+    if (result.ok) {
+      console.error(`credential validation ok via ${result.host}`);
       process.exit(0);
     }
-    const msg = data.msg || data.message || `HTTP ${res.statusCode}`;
-    console.error(`credential validation failed: code=${data.code} msg=${msg}`);
-    process.exit(1);
-  });
-});
-
-req.on("timeout", () => {
-  req.destroy(new Error(`request timed out for ${host}`));
-});
-req.on("error", (err) => {
-  console.error(`credential validation request failed: ${err.message}`);
+    failures.push(`${result.host}: ${result.detail}`);
+  }
+  console.error(`credential validation failed on all hosts: ${failures.join("; ")}`);
   process.exit(1);
-});
-req.write(payload);
-req.end();
+})();
 NODE
 }
 
@@ -808,20 +826,46 @@ NODE
 read_valid_lark_app_secret() {
   app_id="$1"
   brand="${2:-feishu}"
-  secret_url="$(lark_app_console_url "$app_id")"
-  log "open this URL to copy App Secret: $secret_url" >&2
 
   while true; do
+    secret_url="$(lark_app_console_url "$app_id")"
+    log "validating lark_app_id: $app_id" >&2
+    log "open this URL to copy App Secret: $secret_url" >&2
     app_secret="${LARK_APP_SECRET:-$(read_secret 'lark_app_secret: ')}"
+    app_secret="$(trim_space "$app_secret")"
     if validate_lark_app_credentials "$app_id" "$app_secret" "$brand"; then
       log "lark app credentials validated" >&2
-      printf '%s' "$app_secret"
+      printf '%s\t%s' "$app_id" "$app_secret"
       return
     fi
     if [[ -n "${LARK_APP_SECRET:-}" || ! -t 0 ]]; then
       die "lark app credential validation failed"
     fi
-    warn "App Secret validation failed; please copy the App Secret again"
+    warn "App Secret validation failed for app_id=$app_id"
+    printf '[%s] Choose next step:\n' "$APP_NAME" >&2
+    printf '  1) retry App Secret for the same app_id\n' >&2
+    printf '  2) enter a different app_id\n' >&2
+    printf '  3) trust this App ID/Secret and continue without validation\n' >&2
+    printf '  4) abort\n' >&2
+    read -r -p "Select [1]: " credential_choice
+    case "${credential_choice:-1}" in
+      1 | retry)
+        ;;
+      2 | app | appid | app_id)
+        app_id="$(read_required 'lark_app_id: ')"
+        ;;
+      3 | trust | continue)
+        warn "using lark app credentials without successful deploy-time validation"
+        printf '%s\t%s' "$app_id" "$app_secret"
+        return
+        ;;
+      4 | abort)
+        die "valid lark app credentials are required"
+        ;;
+      *)
+        die "unknown credential choice: $credential_choice"
+        ;;
+    esac
   done
 }
 
@@ -850,7 +894,9 @@ ensure_existing_config_valid() {
     fi
   fi
   brand="$(detect_lark_brand)"
-  app_secret="$(read_valid_lark_app_secret "$app_id" "$brand")"
+  credential_pair="$(read_valid_lark_app_secret "$app_id" "$brand")"
+  app_id="${credential_pair%%	*}"
+  app_secret="${credential_pair#*	}"
   update_config_credentials "$app_id" "$app_secret"
   log "updated lark_app_id and lark_app_secret in $CONFIG_FILE"
 }
@@ -921,7 +967,9 @@ write_config_if_missing() {
     lark_app_id="$(read_required 'lark_app_id: ')"
   fi
   lark_brand="$(detect_lark_brand)"
-  lark_app_secret="$(read_valid_lark_app_secret "$lark_app_id" "$lark_brand")"
+  credential_pair="$(read_valid_lark_app_secret "$lark_app_id" "$lark_brand")"
+  lark_app_id="${credential_pair%%	*}"
+  lark_app_secret="${credential_pair#*	}"
   default_work_dir="${DEFAULT_WORK_DIR:-$HOME}"
 
   umask 077
