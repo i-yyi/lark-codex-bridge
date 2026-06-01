@@ -41,7 +41,7 @@
    - binary: `$HOME/.local/bin`
 
 3. 检查依赖
-   - `node` / `npm` / `npx`：要求 Node.js >= 18；脚本不会用 sudo 安装 Node.js
+   - `node` / `npm` / `npx`：要求 Node.js >= 18；缺失或版本过低时通过 nvm 用户态安装 Node.js LTS
    - `lark-cli`：缺失时用 npm 安装 `@larksuite/cli`
    - Lark skills：缺失时执行 `npx --yes skills add larksuite/cli -g -y`
    - `codex`：缺失时用 npm 安装 `@openai/codex`

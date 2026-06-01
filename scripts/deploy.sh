@@ -4,6 +4,8 @@ set -euo pipefail
 APP_NAME="lark-bridge"
 GO_VERSION="${GO_VERSION:-1.22.12}"
 MIN_NODE_MAJOR="${MIN_NODE_MAJOR:-18}"
+NODE_VERSION="${NODE_VERSION:-lts/*}"
+NVM_VERSION="${NVM_VERSION:-v0.40.3}"
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 CONFIG_HOME="${XDG_CONFIG_HOME:-$HOME/.config}"
@@ -111,10 +113,31 @@ ensure_dirs() {
   mkdir -p "$CONFIG_DIR" "$STATE_DIR" "$INSTALL_DIR"
 }
 
-ensure_npm() {
-  load_nvm
+install_nvm() {
+  nvm_dir="${NVM_DIR:-$HOME/.nvm}"
+  if [[ -s "$nvm_dir/nvm.sh" ]]; then
+    return
+  fi
 
-  has_cmd node || die "node not found. Install Node.js >= $MIN_NODE_MAJOR or make nvm available, then rerun."
+  nvm_url="https://raw.githubusercontent.com/nvm-sh/nvm/$NVM_VERSION/install.sh"
+  log "nvm not found, installing nvm $NVM_VERSION into $nvm_dir"
+  mkdir -p "$nvm_dir"
+  if has_cmd curl; then
+    curl -fsSL "$nvm_url" | PROFILE=/dev/null NVM_DIR="$nvm_dir" bash
+  elif has_cmd wget; then
+    wget -qO- "$nvm_url" | PROFILE=/dev/null NVM_DIR="$nvm_dir" bash
+  else
+    die "curl or wget is required to install nvm"
+  fi
+
+  [[ -s "$nvm_dir/nvm.sh" ]] || die "nvm installation did not create $nvm_dir/nvm.sh"
+}
+
+validate_npm() {
+  missing_node_msg="$1"
+  version_msg="$2"
+
+  has_cmd node || die "$missing_node_msg"
   has_cmd npm || die "npm not found. Install Node.js/npm first, then rerun."
   has_cmd npx || die "npx not found. Install Node.js/npm first, then rerun."
 
@@ -123,8 +146,46 @@ ensure_npm() {
   log "npm found: $(npm --version) ($(command -v npm))"
   log "npx found: $(npx --version) ($(command -v npx))"
   if [[ ! "$node_major" =~ ^[0-9]+$ || "$node_major" -lt "$MIN_NODE_MAJOR" ]]; then
-    die "Node.js >= $MIN_NODE_MAJOR is required; current node is $(node --version) at $(command -v node). If using nvm, ensure default points to a supported version."
+    die "$version_msg; current node is $(node --version) at $(command -v node)."
   fi
+}
+
+ensure_node_runtime() {
+  load_nvm
+
+  if has_cmd node && has_cmd npm && has_cmd npx; then
+    node_major="$(node_major_version)"
+    if [[ "$node_major" =~ ^[0-9]+$ && "$node_major" -ge "$MIN_NODE_MAJOR" ]]; then
+      return
+    fi
+  fi
+
+  install_nvm
+  load_nvm
+  has_cmd nvm || die "nvm was installed but is not available in the current shell"
+
+  log "installing Node.js $NODE_VERSION with nvm"
+  nvm install "$NODE_VERSION"
+  installed_node="$(nvm version "$NODE_VERSION")"
+  if [[ "$installed_node" == "N/A" ]]; then
+    installed_node="$NODE_VERSION"
+  fi
+  nvm alias default "$installed_node" >/dev/null
+  nvm use --silent "$installed_node"
+}
+
+check_npm() {
+  load_nvm
+  validate_npm \
+    "node not found; normal deploy can install Node.js with nvm" \
+    "Node.js >= $MIN_NODE_MAJOR is required. Normal deploy can install a supported version with nvm"
+}
+
+ensure_npm() {
+  ensure_node_runtime
+  validate_npm \
+    "node not found after attempted nvm install" \
+    "Node.js >= $MIN_NODE_MAJOR is required"
 }
 
 ensure_lark_cli() {
@@ -551,7 +612,7 @@ check_existing_config() {
 preflight_check() {
   bootstrap_path
   log "running preflight checks only"
-  ensure_npm
+  check_npm
   check_cmd lark-cli
   check_lark_skills
   check_cmd codex
