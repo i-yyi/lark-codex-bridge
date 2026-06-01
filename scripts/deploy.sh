@@ -152,7 +152,7 @@ check_npm_nvm_compatibility() {
   fi
 
   npmrc="$HOME/.npmrc"
-  [[ -f "$npmrc" ]] || return
+  [[ -f "$npmrc" ]] || return 0
 
   while IFS= read -r line || [[ -n "$line" ]]; do
     if [[ "$line" =~ ^[[:space:]]*prefix[[:space:]]*= ]]; then
